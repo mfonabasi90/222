@@ -1,12 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import * as faceapi from 'face-api.js';
-import { extractFacialMetrics, FacialMetrics } from '../utils/faceAnalysis';
+import {
+  Point, Pose, estimatePose, canonicalizeLandmarks,
+  readLensInfo, undistortLandmarks, LensInfo
+} from '../utils/geometry';
+import { computeAllMetrics, detectOcclusion, MetricResult, OcclusionMap } from '../utils/metrics';
+import { estimateAge, AgeEstimate } from '../utils/analysis';
 import { drawFaceAnalysis, DrawOptions } from '../utils/drawing';
+
+export interface ImageAnalysisResult {
+  imageUrl: string;
+  landmarks: Point[];
+  canonicalLandmarks: Point[];
+  pose: Pose;
+  occlusion: OcclusionMap;
+  metrics: MetricResult[];
+  ageEstimate: AgeEstimate;
+  lensInfo: LensInfo;
+  quality: 'good' | 'fair' | 'poor';
+}
 
 interface FaceCanvasProps {
   image: string | null;
   label: string;
-  onMetricsExtracted: (metrics: FacialMetrics | null) => void;
+  onAnalysisComplete: (result: ImageAnalysisResult | null) => void;
   onLoadingChange: (loading: boolean) => void;
   onError: (error: string | null) => void;
   drawOptions: DrawOptions;
@@ -16,7 +33,7 @@ interface FaceCanvasProps {
 export default function FaceCanvas({
   image,
   label,
-  onMetricsExtracted,
+  onAnalysisComplete,
   onLoadingChange,
   onError,
   drawOptions,
@@ -24,7 +41,7 @@ export default function FaceCanvas({
 }: FaceCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const [detection, setDetection] = useState<faceapi.FaceLandmarks68 | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<ImageAnalysisResult | null>(null);
   const [noFace, setNoFace] = useState(false);
 
   useEffect(() => {
@@ -48,7 +65,7 @@ export default function FaceCanvas({
         const canvas = canvasRef.current!;
         const ctx = canvas.getContext('2d')!;
 
-        // Scale image to fit canvas max dimensions
+        // Scale image
         const maxW = 500;
         const maxH = 500;
         let w = img.naturalWidth;
@@ -59,11 +76,9 @@ export default function FaceCanvas({
 
         canvas.width = w;
         canvas.height = h;
-
-        // Draw image
         ctx.drawImage(img, 0, 0, w, h);
 
-        // Detect face using TinyFaceDetector (which we actually loaded)
+        // Detect face
         const options = new faceapi.TinyFaceDetectorOptions({
           inputSize: 416,
           scoreThreshold: 0.3,
@@ -77,26 +92,67 @@ export default function FaceCanvas({
 
         if (!result) {
           setNoFace(true);
-          setDetection(null);
-          onMetricsExtracted(null);
+          setAnalysisResult(null);
+          onAnalysisComplete(null);
           onLoadingChange(false);
           return;
         }
 
-        const landmarks = result.landmarks;
-        setDetection(landmarks);
+        // Extract landmarks as simple points
+        const rawLandmarks: Point[] = result.landmarks.positions.map(p => ({ x: p.x, y: p.y }));
 
-        // Extract metrics
-        const metrics = extractFacialMetrics(landmarks);
-        onMetricsExtracted(metrics);
+        // Estimate face size ratio for lens estimation
+        const box = result.detection.box;
+        const faceSizeRatio = (box.width * box.height) / (w * h);
+
+        // Read lens info
+        const lensInfo = await readLensInfo(image, faceSizeRatio);
+
+        // Apply lens undistortion if needed
+        const undistorted = undistortLandmarks(rawLandmarks, lensInfo, { width: w, height: h });
+
+        // Detect occlusion
+        const occlusion = detectOcclusion(undistorted);
+
+        // Estimate pose
+        const pose = estimatePose(undistorted);
+
+        // Canonicalize landmarks (pose-normalize)
+        const canonicalLandmarks = canonicalizeLandmarks(undistorted, pose);
+
+        // Compute metrics in canonical frame
+        const metrics = computeAllMetrics(canonicalLandmarks, occlusion);
+
+        // Estimate age
+        const ageEstimate = estimateAge(metrics);
+
+        // Determine quality
+        const goodMetrics = metrics.filter(m => m.quality === 'good' && !m.isOccluded).length;
+        const totalMetrics = metrics.filter(m => !m.isOccluded).length;
+        const quality = goodMetrics / totalMetrics > 0.7 ? 'good' : goodMetrics / totalMetrics > 0.4 ? 'fair' : 'poor';
+
+        const analysisResult: ImageAnalysisResult = {
+          imageUrl: image,
+          landmarks: undistorted,
+          canonicalLandmarks,
+          pose,
+          occlusion,
+          metrics,
+          ageEstimate,
+          lensInfo,
+          quality,
+        };
+
+        setAnalysisResult(analysisResult);
+        onAnalysisComplete(analysisResult);
 
         // Draw analysis
-        drawFaceAnalysis(ctx, landmarks, drawOptions, w, h);
+        drawFaceAnalysis(ctx, undistorted, canonicalLandmarks, pose, occlusion, drawOptions, w, h);
       } catch (err) {
         if (cancelled) return;
         console.error('Face detection error:', err);
         const message = err instanceof Error ? err.message : 'Failed to detect face';
-        onError(message + '. Please try another image with a clear, front-facing photo.');
+        onError(message + '. Please try another image.');
         onLoadingChange(false);
       }
 
@@ -111,14 +167,12 @@ export default function FaceCanvas({
       onLoadingChange(false);
     };
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [image, modelsReady]);
 
   // Redraw when options change
   useEffect(() => {
-    if (!detection || !canvasRef.current || !imgRef.current) return;
+    if (!analysisResult || !canvasRef.current || !imgRef.current) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d')!;
@@ -126,8 +180,17 @@ export default function FaceCanvas({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    drawFaceAnalysis(ctx, detection, drawOptions, canvas.width, canvas.height);
-  }, [drawOptions, detection]);
+    drawFaceAnalysis(
+      ctx,
+      analysisResult.landmarks,
+      analysisResult.canonicalLandmarks,
+      analysisResult.pose,
+      analysisResult.occlusion,
+      drawOptions,
+      canvas.width,
+      canvas.height
+    );
+  }, [drawOptions, analysisResult]);
 
   return (
     <div className="flex flex-col items-center">
@@ -160,6 +223,27 @@ export default function FaceCanvas({
           </div>
         )}
       </div>
+      {analysisResult && (
+        <div className="mt-3 text-xs text-gray-400 space-y-1 w-full max-w-[400px]">
+          <div className="flex justify-between">
+            <span>Pose: R={analysisResult.pose.roll.toFixed(1)}° P={analysisResult.pose.pitch.toFixed(1)}° Y={analysisResult.pose.yaw.toFixed(1)}°</span>
+            <span className={analysisResult.quality === 'good' ? 'text-green-400' : analysisResult.quality === 'fair' ? 'text-yellow-400' : 'text-red-400'}>
+              Quality: {analysisResult.quality}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span>Age est: {analysisResult.ageEstimate.estimatedAge}yr [{analysisResult.ageEstimate.confidenceInterval[0]}-{analysisResult.ageEstimate.confidenceInterval[1]}]</span>
+            {analysisResult.lensInfo.distortionWarning && (
+              <span className="text-yellow-400">⚠️ Wide-angle lens</span>
+            )}
+          </div>
+          {analysisResult.occlusion.overallConfidence < 0.9 && (
+            <div className="text-yellow-400">
+              ⚠️ Possible occlusion detected (confidence: {(analysisResult.occlusion.overallConfidence * 100).toFixed(0)}%)
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
