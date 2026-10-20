@@ -5,7 +5,11 @@ import AnalysisResults from './components/AnalysisResults';
 import { FacialMetrics } from './utils/faceAnalysis';
 import { DrawOptions } from './utils/drawing';
 
-const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+const MODEL_URLS = [
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/',
+  'https://justadudewhohacks.github.io/face-api.js/models/',
+  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/',
+];
 
 function App() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -33,19 +37,26 @@ function App() {
     showMeasurements: true,
   });
 
-  // Load face-api.js models
+  // Load face-api.js models with fallback CDN URLs
   useEffect(() => {
     const loadModels = async () => {
-      try {
-        setLoadingModels(true);
-        setModelError(null);
-        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-        setModelsLoaded(true);
-      } catch (err) {
-        console.error('Error loading models:', err);
-        setModelError('Failed to load face detection models. Please check your internet connection and refresh.');
+      setLoadingModels(true);
+      setModelError(null);
+
+      for (const url of MODEL_URLS) {
+        try {
+          await faceapi.nets.tinyFaceDetector.loadFromUri(url);
+          await faceapi.nets.faceLandmark68Net.loadFromUri(url);
+          setModelsLoaded(true);
+          setLoadingModels(false);
+          return;
+        } catch (err) {
+          console.warn(`Failed to load models from ${url}:`, err);
+          continue;
+        }
       }
+
+      setModelError('Failed to load face detection models from all sources. Please check your internet connection and refresh.');
       setLoadingModels(false);
     };
     loadModels();
@@ -187,6 +198,7 @@ function App() {
               onLoadingChange={setLoading1}
               onError={setError1}
               drawOptions={drawOptions}
+              modelsReady={modelsLoaded}
             />
           </div>
 
@@ -226,6 +238,7 @@ function App() {
               onLoadingChange={setLoading2}
               onError={setError2}
               drawOptions={drawOptions}
+              modelsReady={modelsLoaded}
             />
           </div>
         </div>
