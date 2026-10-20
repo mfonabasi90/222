@@ -182,6 +182,13 @@ export function computeAllMetrics(
   // 13. Forehead Height (brow to hairline estimate) / Face Height
   metrics.push(computeForeheadRatio(canonicalLandmarks, occlusion));
 
+  // 14. Ear placement on the eye–mouth vertical axis (stable across ages).
+  //     face-api's 68-point model has no ear landmarks, so this is only
+  //     available when an extended landmark set is present (>68 points).
+  if (canonicalLandmarks.length > 68) {
+    metrics.push(computeEarPositionRatio(canonicalLandmarks, occlusion));
+  }
+
   // Add L/R consistency checks
   addLeftRightConsistency(metrics);
 
@@ -519,6 +526,51 @@ function computeForeheadRatio(lm: Point[], occ: OcclusionMap): MetricResult {
     styleSensitivity: 0.2, // Hair can affect
     leftRightConsistency: 1.0,
     notes: 'Forehead proportion decreases child→adult.',
+  };
+}
+
+/**
+ * Ear placement ratio — vertical position of the earlobe/ear span relative to the
+ * eye-to-mouth axis. Anthropologically one of the most age-invariant registrations
+ * on the head (the ear top tracks the eye line, the ear bottom tracks the nose base),
+ * which makes it a useful cross-age identity cue when ears are visible.
+ *
+ * Requires an extended landmark set (>68 points); face-api's 68-point model has no
+ * ear points, so this metric is simply absent for standard detections.
+ */
+function computeEarPositionRatio(lm: Point[], occ: OcclusionMap): MetricResult {
+  // Extended indices beyond 67 are assumed to be [left tragus, left helix top,
+  // right tragus, right helix top] in that order.
+  const base = 68;
+  const hasPoints = lm.length >= base + 4;
+
+  const metricFn = (pts: Point[]) => {
+    if (pts.length < base + 4) return 0;
+    const eyeLineY = (pts[39].y + pts[42].y) / 2;            // inner canthi
+    const mouthLineY = (pts[51].y + pts[57].y) / 2;          // lip midlines
+    const earTopY = (pts[base + 1].y + pts[base + 3].y) / 2; // helix tops
+    const span = mouthLineY - eyeLineY;
+    return Math.abs(span) > 1 ? (earTopY - eyeLineY) / span : 0;
+  };
+
+  const uncertainty = hasPoints
+    ? bootstrapUncertainty(lm, metricFn)
+    : { mean: 0, std: 0, ci95: [0, 0] as [number, number], nSamples: 0 };
+
+  return {
+    name: 'Ear Position / Eye-Mouth Axis',
+    category: 'Ears',
+    value: uncertainty.mean,
+    unit: '',
+    uncertainty,
+    quality: !hasPoints || occ.jaw ? 'occluded' : uncertainty.std < 0.05 ? 'good' : 'fair',
+    isOccluded: !hasPoints,
+    identityWeight: 0.7,
+    ageStability: 0.9, // registration stays constant even though the ear grows
+    styleSensitivity: 0.3, // hair coverage
+    leftRightConsistency: 1.0,
+    notes:
+      'Ear-top vs eye→mouth band. Nearly immune to ageing, but needs both ears visible and uncovered.',
   };
 }
 

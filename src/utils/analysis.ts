@@ -36,6 +36,47 @@ export interface CalibratedScore {
   opposingMetrics: { name: string; contribution: number; direction: 'support' | 'oppose' }[];
   ageAdjustment: number; // How much the score changed due to age adjustment
   methodNote: string;
+  /** Per-metric breakdown — the exact evidence that produced the verdict */
+  comparisons: MetricComparison[];
+  /** Metrics excluded from scoring (occluded / poor quality) with the reason */
+  excluded: { name: string; reason: string }[];
+  /** Traits that changed in line with growth expectations */
+  expectedChangesCount: number;
+  /** Total traits that development predicts should have changed */
+  changingTraitsCount: number;
+  /** Identity-stable traits that matched */
+  stableMatchesCount: number;
+  /** Total identity-stable traits compared */
+  stableTraitsCount: number;
+  /** True when image #1 holds the younger photo (inferred + user override) */
+  youngerIsFirst: boolean;
+}
+
+/** Narrative summary of the comparison, e.g. "same person, consistent with normal growth". */
+export function describeVerdict(score: CalibratedScore, ageDelta: number): string {
+  const s = score.overallScore;
+  const growthOk =
+    score.changingTraitsCount === 0 ||
+    score.expectedChangesCount / Math.max(1, score.changingTraitsCount) >= 0.5;
+
+  if (s >= 75) {
+    return `Strong match. ${score.stableMatchesCount}/${score.stableTraitsCount} age-invariant traits agree` +
+      (growthOk && ageDelta > 3
+        ? `, and the changes we did see follow normal growth for a ~${ageDelta}-year gap.`
+        : '.');
+  }
+  if (s >= 60) {
+    return `Moderate match. Most stable identity cues (eyes, spacing, jaw geometry) line up` +
+      (ageDelta > 5 ? ` despite an estimated ~${ageDelta}-year difference.` : '.');
+  }
+  if (s >= 45) {
+    return 'Inconclusive. The measurements are consistent with either the same person at two ages ' +
+      'or two different people — try adding clearer, front-facing photos of each.';
+  }
+  if (s >= 30) {
+    return 'Moderate mismatch. Several age-invariant traits differ beyond measurement error.';
+  }
+  return 'Strong mismatch. Multiple identity-stable traits disagree well past what growth can explain.';
 }
 
 export interface AggregatedResult {
@@ -204,6 +245,27 @@ export const DEVELOPMENTAL_PRIORS: DevelopmentalPrior[] = [
     tolerance: 0.02,
     source: 'Philtrum length relatively stable',
   },
+  {
+    metricName: 'Mouth Width / Face Width',
+    direction: 'stable',
+    magnitudePerYear: 0.0005, // mouth width tracks bizygomatic width closely
+    tolerance: 0.035,         // extra slack because expression inflates this measure
+    source: 'Farkas 1994: oral width grows proportionally with facial width',
+  },
+  {
+    metricName: 'Mouth Aspect Ratio (H/W)',
+    direction: 'decreases',
+    magnitudePerYear: -0.0015, // vermilion thins/eversion reduces with age
+    tolerance: 0.04,
+    source: 'Perioral soft-tissue thinning; heavily expression-confounded',
+  },
+  {
+    metricName: 'Ear Position / Eye-Mouth Axis',
+    direction: 'stable',
+    magnitudePerYear: 0.0,
+    tolerance: 0.06,
+    source: 'Ear registration to the eye line is age-invariant (Farkas 1994)',
+  },
 ];
 
 export function getExpectedDelta(metricName: string, ageDelta: number): { expected: number; tolerance: number } {
@@ -214,80 +276,207 @@ export function getExpectedDelta(metricName: string, ageDelta: number): { expect
   return { expected, tolerance: prior.tolerance };
 }
 
+// ─── Per-metric comparison detail (shared by scoring and the UI) ─────────────
+
+export interface MetricComparison {
+  name: string;
+  value1: number;
+  value2: number;
+  unit: string;
+  observedDelta: number;
+  expectedDelta: number;   // developmental expectation (signed, younger → older)
+  tolerance: number;       // effective tolerance incl. measurement uncertainty
+  residual: number;        // |observed| - |expected|, i.e. unexplained difference
+  normalizedResidual: number;
+  logLR: number;           // + supports same person, − supports different person
+  weight: number;          // identity × age-stability × quality × (1 - style/2)
+  contribution: number;    // logLR * weight
+  direction: 'support' | 'oppose' | 'neutral';
+  /** Does the observed change match the direction/magnitude growth predicts? */
+  growthConsistent: boolean;
+  /** Growth predicted a change here but we measured almost none */
+  underChanged: boolean;
+  classification: 'stable' | 'moderate' | 'changing';
+  category: string;
+}
+
+const NEUTRAL_BAND = 0.75; // |residual| below this fraction of tolerance ⇒ no evidence either way
+
+/** Classify how strongly a trait changes from childhood to adulthood. */
+export function classifyTrait(name: string): 'stable' | 'moderate' | 'changing' {
+  const prior = DEVELOPMENTAL_PRIORS.find(p => p.metricName === name);
+  if (!prior || prior.direction === 'stable') return 'stable';
+  return Math.abs(prior.magnitudePerYear) >= 0.004 ? 'changing' : 'moderate';
+}
+
+/**
+ * Compare one metric pair across the two photos. This is the single source of
+ * truth used by both computeCalibratedScore() and the results UI, so what you
+ * see in the cards is exactly what drove the verdict.
+ *
+ * @param youngerIsFirst true when image #1 holds the younger/child photo.
+ *        The developmental priors are written for "change per year from young
+ *        to old", so the orientation only matters for the narrative fields
+ *        (growthConsistent / underChanged) — the evidence itself is symmetric.
+ */
+export function compareMetric(
+  m1: MetricResult,
+  m2: MetricResult,
+  ageDelta: number,
+  ageNormalized: boolean,
+  youngerIsFirst: boolean = true
+): MetricComparison {
+  const observedDelta = Math.abs(m1.value - m2.value);
+
+  // Signed growth expectation oriented from the YOUNGER photo to the OLDER photo.
+  const { expected: signedRaw, tolerance } = getExpectedDelta(m1.name, ageDelta);
+  const expectedAbs = Math.abs(signedRaw);
+
+  const expected = ageNormalized ? signedRaw : 0;
+  const residual = Math.abs(observedDelta - expectedAbs);
+
+  const effectiveTolerance = Math.max(
+    ageNormalized ? tolerance : tolerance * 0.6,
+    m1.uncertainty.std + m2.uncertainty.std,
+    0.01
+  );
+
+  const normalizedResidual = residual / effectiveTolerance;
+
+  let logLR: number;
+  if (normalizedResidual < NEUTRAL_BAND) {
+    logLR = 0; // indistinguishable from noise — abstain rather than fake support
+  } else if (normalizedResidual < 1) {
+    logLR = (1 - normalizedResidual) * 0.5; // mild support for same person
+  } else {
+    logLR = -(normalizedResidual - 1) * 0.8; // support for different persons
+  }
+
+  const qualityFactor = m1.quality === 'good' && m2.quality === 'good'
+    ? 1.0
+    : m1.quality === 'poor' || m2.quality === 'poor'
+      ? 0.3
+      : 0.7;
+
+  const weight =
+    m1.identityWeight * m1.ageStability * qualityFactor * (1 - m1.styleSensitivity * 0.5);
+
+  const contribution = logLR * weight;
+
+  // Is the observed change consistent with development?
+  // We look at the raw signed difference (older minus younger) versus the
+  // predicted sign & magnitude, independent of whether normalization is on.
+  const signedObserved = youngerIsFirst ? m2.value - m1.value : m1.value - m2.value;
+  const growthConsistent =
+    expectedAbs > 0.001 &&
+    Math.sign(signedObserved) === Math.sign(signedRaw) &&
+    Math.abs(Math.abs(signedObserved) - expectedAbs) <= effectiveTolerance * 1.5;
+  const underChanged =
+    expectedAbs > 0.001 && observedDelta < effectiveTolerance * NEUTRAL_BAND && !growthConsistent;
+
+  return {
+    name: m1.name,
+    value1: m1.value,
+    value2: m2.value,
+    unit: m1.unit,
+    observedDelta,
+    expectedDelta: expected,
+    tolerance: effectiveTolerance,
+    residual,
+    normalizedResidual,
+    logLR,
+    weight,
+    contribution,
+    direction: contribution > 0 ? 'support' : contribution < 0 ? 'oppose' : 'neutral',
+    growthConsistent,
+    underChanged,
+    classification: classifyTrait(m1.name),
+    category: m1.category,
+  };
+}
+
+/** Vote on which side is younger using the strongest growth-sensitive traits. */
+export function inferAgeOrientation(
+  metrics1: MetricResult[],
+  metrics2: MetricResult[]
+): { youngerIsFirst: boolean; agreement: number; votes: number } {
+  const directional = DEVELOPMENTAL_PRIORS.filter(p => p.direction !== 'stable');
+  let yes = 0;
+  let no = 0;
+  for (const prior of directional) {
+    const m1 = metrics1.find(m => m.name === prior.metricName);
+    const m2 = metrics2.find(m => m.name === prior.metricName);
+    if (!m1 || !m2 || m1.isOccluded || m2.isOccluded) continue;
+    const diff = m2.value - m1.value;
+    if (Math.abs(diff) < 1e-6) continue;
+    const matchesGrowthDirection = Math.sign(diff) === Math.sign(prior.magnitudePerYear);
+    if (matchesGrowthDirection) yes += 1; // image 2 looks older
+    else no += 1;                          // image 1 looks older
+  }
+  const total = yes + no;
+  return {
+    youngerIsFirst: yes >= no,
+    agreement: total > 0 ? Math.max(yes, no) / total : 0.5,
+    votes: total,
+  };
+}
+
 // ─── Calibrated Scoring ──────────────────────────────────────────────────────
+
+export type YoungerSide = 'auto' | 'first' | 'second';
 
 export function computeCalibratedScore(
   metrics1: MetricResult[],
   metrics2: MetricResult[],
   age1: AgeEstimate,
   age2: AgeEstimate,
-  ageNormalized: boolean = false
+  ageNormalized: boolean = false,
+  youngerSide: YoungerSide = 'auto'
 ): CalibratedScore {
   const ageDelta = Math.abs(age1.estimatedAge - age2.estimatedAge);
   const supportingMetrics: { name: string; contribution: number; direction: 'support' | 'oppose' }[] = [];
   const opposingMetrics: { name: string; contribution: number; direction: 'support' | 'oppose' }[] = [];
 
+  // Which photo holds the younger face? Auto-detect from growth-direction votes,
+  // unless the user pinned it in the UI (the honest answer for "me as a child").
+  const orientation = inferAgeOrientation(metrics1, metrics2);
+  const youngerIsFirst =
+    youngerSide === 'first' ? true : youngerSide === 'second' ? false : orientation.youngerIsFirst;
+
   let totalLogLikelihood = 0;
   let totalWeight = 0;
+  const comparisons: MetricComparison[] = [];
+  const excluded: { name: string; reason: string }[] = [];
 
   // Match metrics by name
   for (const m1 of metrics1) {
     const m2 = metrics2.find(m => m.name === m1.name);
     if (!m2) continue;
 
-    // Skip occluded metrics
-    if (m1.isOccluded || m2.isOccluded) continue;
-
-    // Skip low-quality metrics
-    if (m1.quality === 'poor' || m2.quality === 'poor') continue;
-
-    // Compute observed delta
-    const observedDelta = Math.abs(m1.value - m2.value);
-
-    // Compute expected delta (from developmental priors if age-normalized)
-    const { expected, tolerance } = ageNormalized
-      ? getExpectedDelta(m1.name, ageDelta)
-      : { expected: 0, tolerance: m1.uncertainty.std * 2 };
-
-    // Residual: how far is observed from expected
-    const residual = Math.abs(observedDelta - Math.abs(expected));
-
-    // Effective tolerance: combine measurement uncertainty with prior tolerance
-    const effectiveTolerance = Math.max(
-      tolerance,
-      m1.uncertainty.std + m2.uncertainty.std,
-      0.01
-    );
-
-    // Compute log-likelihood ratio
-    // If residual < tolerance: supports same person
-    // If residual > 3*tolerance: supports different person
-    const normalizedResidual = residual / effectiveTolerance;
-    let logLR: number;
-    if (normalizedResidual < 1) {
-      logLR = (1 - normalizedResidual) * 0.5; // Supports same person
-    } else {
-      logLR = -(normalizedResidual - 1) * 0.8; // Supports different person
+    if (m1.isOccluded || m2.isOccluded) {
+      excluded.push({ name: m1.name, reason: 'Occluded in one or both photos' });
+      continue;
+    }
+    if (m1.quality === 'poor' || m2.quality === 'poor') {
+      excluded.push({ name: m1.name, reason: 'Low landmark quality' });
+      continue;
     }
 
-    // Weight by identity-informativeness × age-stability × quality
-    const qualityFactor = m1.quality === 'good' ? 1.0 : m1.quality === 'fair' ? 0.7 : 0.3;
-    const weight = m1.identityWeight * m1.ageStability * qualityFactor * (1 - m1.styleSensitivity * 0.5);
+    const cmp = compareMetric(m1, m2, ageDelta, ageNormalized, youngerIsFirst);
+    comparisons.push(cmp);
 
-    totalLogLikelihood += logLR * weight;
-    totalWeight += weight;
+    totalLogLikelihood += cmp.logLR * cmp.weight;
+    totalWeight += cmp.weight;
 
-    // Track contributions
-    const contribution = logLR * weight;
     const entry = {
       name: m1.name,
-      contribution: Math.abs(contribution),
-      direction: (contribution > 0 ? 'support' : 'oppose') as 'support' | 'oppose',
+      contribution: Math.abs(cmp.contribution),
+      direction: (cmp.contribution > 0 ? 'support' : 'oppose') as 'support' | 'oppose',
     };
 
-    if (contribution > 0) {
+    if (cmp.contribution > 0) {
       supportingMetrics.push(entry);
-    } else {
+    } else if (cmp.contribution < 0) {
       opposingMetrics.push(entry);
     }
   }
@@ -328,18 +517,28 @@ export function computeCalibratedScore(
   // Age adjustment note
   const ageAdjustment = ageNormalized ? ageDelta * 0.5 : 0;
 
+  const changingTraits = comparisons.filter(c => c.classification !== 'stable');
+  const stableTraits = comparisons.filter(c => c.classification === 'stable');
+
   return {
     overallScore: Math.round(overallScore),
     confidenceInterval: [Math.round(ci[0]), Math.round(ci[1])],
     likelihoodRatio,
     verdict,
-    supportingMetrics: supportingMetrics.slice(0, 5),
-    opposingMetrics: opposingMetrics.slice(0, 5),
+    supportingMetrics: supportingMetrics.slice(0, 6),
+    opposingMetrics: opposingMetrics.slice(0, 6),
     ageAdjustment,
-    methodNote: `Score based on ${totalWeight.toFixed(1)} weighted metric comparisons. ` +
-      `Age delta: ${ageDelta} years. ` +
-      `${ageNormalized ? 'Age-normalized' : 'Raw'} comparison. ` +
-      `Not forensic identification.`,
+    comparisons,
+    excluded,
+    expectedChangesCount: changingTraits.filter(c => c.growthConsistent).length,
+    changingTraitsCount: changingTraits.length,
+    stableMatchesCount: stableTraits.filter(c => c.direction !== 'oppose').length,
+    stableTraitsCount: stableTraits.length,
+    youngerIsFirst,
+    methodNote: `Score based on ${totalWeight.toFixed(1)} weighted metric comparisons ` +
+      `(${comparisons.length} scored, ${excluded.length} excluded). ` +
+      `Age delta: ~${ageDelta} years; younger photo: ${youngerIsFirst ? 'left' : 'right'}. ` +
+      `${ageNormalized ? 'Age-normalized' : 'Raw'} comparison. Not forensic identification.`,
   };
 }
 
