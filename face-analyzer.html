@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Face Structure Analyzer &amp; Similarity Comparator</title>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+  :root{
+    --bg:#0b1120; --panel:#131c2e; --panel2:#1a2540; --line:#26334d;
+    --txt:#e6edf7; --mut:#8ea0bd; --acc:#4f8cff; --acc2:#22d3ee;
+    --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{padding:28px 20px 10px;text-align:center}
+  header h1{margin:0;font-size:26px;letter-spacing:.3px}
+  header p{margin:6px auto 0;max-width:720px;color:var(--mut);font-size:14px}
+  main{max-width:1240px;margin:0 auto;padding:16px 20px 60px}
+  .status{display:flex;align-items:center;gap:10px;justify-content:center;margin:14px 0;flex-wrap:wrap}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--warn);animation:pulse 1.2s infinite}
+  .dot.ok{background:var(--good);animation:none}
+  .dot.err{background:var(--bad);animation:none}
+  @keyframes pulse{50%{opacity:.35}}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:hidden}
+  .card h2{margin:0 0 10px;font-size:16px;color:var(--acc2)}
+  .drop{border:2px dashed var(--line);border-radius:12px;min-height:180px;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:8px;cursor:pointer;padding:14px;text-align:center;transition:.2s}
+  .drop:hover,.drop.over{border-color:var(--acc);background:rgba(79,140,255,.06)}
+  .drop small{color:var(--mut)}
+  .drop input[type=file]{display:none}
+  canvas.preview{max-width:100%;border-radius:10px;margin-top:12px;display:none}
+  .btn{background:var(--acc);border:none;color:#fff;font-weight:600;padding:10px 18px;border-radius:9px;
+       cursor:pointer;font-size:14px;transition:.15s}
+  .btn:hover{filter:brightness(1.15)} .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.alt{background:var(--panel2);border:1px solid var(--line)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  tr.cat td{color:var(--acc2);font-weight:700;background:var(--panel2);text-transform:uppercase;font-size:12px;letter-spacing:.5px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700}
+  .pill.good{background:rgba(52,211,153,.15);color:var(--good)}
+  .pill.warn{background:rgba(251,191,36,.15);color:var(--warn)}
+  .pill.bad{background:rgba(248,113,113,.15);color:var(--bad)}
+  .barwrap{background:var(--panel2);border-radius:6px;height:10px;position:relative;overflow:hidden;min-width:90px}
+  .bar{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .4s}
+  .bigscore{font-size:44px;font-weight:800;text-align:center;margin:6px 0 2px;
+            background:linear-gradient(90deg,#4f8cff,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .verdict{text-align:center;color:var(--mut);margin-bottom:10px;font-size:14px}
+  .note{font-size:12.5px;color:var(--mut);margin-top:10px}
+  .hidden{display:none!important}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:rot .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes rot{to{transform:rotate(360deg)}}
+  .legend{font-size:12px;color:var(--mut);margin-top:8px}
+  footer{text-align:center;color:var(--mut);font-size:12.5px;padding:20px}
+  a{color:var(--acc)}
+  .errbox{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);color:#fecaca;
+          padding:10px 14px;border-radius:10px;margin:10px 0;font-size:13.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#129504; Face Structure Analyzer &amp; Similarity Comparator</h1>
+  <p>Upload one or two photos. The app detects 68 facial landmarks, estimates head tilt (roll) and yaw,
+     digitally <b>straightens the head to center</b>, then measures every facial angle — eyes, brows, nose, lips, jawline, face thirds —
+     and finally compares the two faces for geometric similarity.</p>
+</header>
+
+<main>
+  <div class="status"><span class="dot" id="modelDot"></span><span id="modelStatus">Loading face-detection models…</span></div>
+  <div id="modelErr" class="errbox hidden"></div>
+
+  <div class="grid">
+    <!-- ================= Image A ================= -->
+    <section class="card">
+      <h2>Photo A</h2>
+      <label class="drop" id="dropA">
+        <input type="file" accept="image/*" id="fileA">
+        <div style="font-size:34px">&#128248;</div>
+        <div><b>Click or drop an image</b></div>
+        <small>frontal-ish face, good lighting works best</small>
+      </label>
+      <canvas class="preview" id="cvA"></canvas>
+      <div class="legend" id="legA"></div>
+    </section>
+
+    <!-- ================= Image B ================= -->
+    <section class="card">
+      <h2>Photo B <span style="color:var(--mut);font-weight:400;font-size:13px">(optional — for comparison)</span></h2>
+      <label class="drop" id="dropB">
+        <input type="file" accept="image/*" id="fileB">
+        <div style="font-size:34px">&#128248;</div>
+        <div><b>Click or drop an image</b></div>
+        <small>used for the similarity analysis</small>
+      </label>
+      <canvas class="preview" id="cvB"></canvas>
+      <div class="legend" id="legB"></div>
+    </section>
+  </div>
+
+  <div class="row" style="justify-content:center;margin-top:20px">
+    <button class="btn" id="btnAnalyze" disabled>&#128207; Analyze Faces</button>
+    <button class="btn alt" id="btnReset">&#8634; Reset</button>
+  </div>
+
+  <!-- ================= Per-face results ================= -->
+  <div id="resultsWrap" class="hidden">
+    <div class="grid" style="margin-top:22px">
+      <section class="card">
+        <h2>Pose &amp; Head Tilt Correction — Photo A</h2>
+        <div id="poseA"></div>
+        <table id="tblA"></table>
+      </section>
+      <section class="card">
+        <h2>Pose &amp; Head Tilt Correction — Photo B</h2>
+        <div id="poseB"></div>
+        <table id="tblB"></table>
+      </section>
+    </div>
+
+    <!-- ================= Similarity ================= -->
+    <section class="card" id="simCard" style="margin-top:18px">
+      <h2>Similarity Analysis (normalized geometry)</h2>
+      <div id="simBody"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  Runs entirely in your browser (face-api.js landmarks + TensorFlow.js). No images are uploaded to any server.<br>
+  Angles are computed after roll-correction; ratios are scale-invariant so they remain meaningful even with mild yaw.
+</footer>
+
+<script>
+"use strict";
+/* ============================================================================
+   LM68 INDEX MAP (face-api.js / iBUG 300-W ordering)
+   0-16 jaw contour | 17-21 left brow | 22-26 right brow | 27-35 nose
+   36-41 left eye  | 42-47 right eye   | 48-67 mouth
+============================================================================ */
+const IDX = {
+  jawL:0, chin:8, jawR:16,
+  browL:[17,18,19,20,21],          // outer -> inner (subject's left brow in image)
+  browR:[26,25,24,23,22],          // stored as outer -> inner via index lookup below
+  noseBridge:[27,28,29,30], noseBase:[31,32,33,34,35],
+  nostrilL:31, nostrilR:35, noseTip:30, noseAlarL:32, noseAlarR:34,
+  eyeL:[36,37,38,39,40,41], eyeR:[42,43,44,45,46,47],
+  eyeLOuter:36, eyeLInTop:37, eyeLPupTop:38, eyeLInner:39, eyeLInBot:40, eyeLPupBot:41,
+  eyeROuter:45, eyeRInTop:44, eyeRPupTop:43, eyeRInner:42, eyeRInBot:47, eyeRPupBot:46,
+  mouth:[48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67],
+  mL:48, mR:54, cupidL:51, cupidC:52, cupidR:53, lipBotCenter:57,
+};
+// NOTE: for brows we use raw indices directly:
+//   subject-left brow  = 17(outer)..21(inner);  subject-right brow = 22(inner)..26(outer)
+
+// ---------- basic helpers ----------
+const V = (x,y)=>({x,y});
+const sub=(a,b)=>V(a.x-b.x,a.y-b.y);
+const add=(a,b)=>V(a.x+b.x,a.y+b.y);
+const mul=(a,k)=>V(a.x*k,a.y*k);
+const mid=(a,b)=>V((a.x+b.x)/2,(a.y+b.y)/2);
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const deg=r=>r*180/Math.PI;
+const rad=d=>d*Math.PI/180;
+// signed angle between vectors v1 and v2 (degrees, magnitude)
+const angBetween=(v1,v2)=>{
+  const d=Math.hypot(v1.x,v1.y)*Math.hypot(v2.x,v2.y);
+  if(d===0) return 0;
+  let c=(v1.x*v2.x+v1.y*v2.y)/d; c=Math.max(-1,Math.min(1,c));
+  return deg(Math.acos(c));
+};
+// interior angle at vertex b formed by points a,b,c
+const angleAt=(a,b,c)=>angBetween(sub(a,b),sub(c,b));
+const lerp=(a,t,b)=>V(a.x+(b.x-a.x)*t, a.y+(b.y-a.y)*t);
+const fmt=(v,n=1)=>Number.isFinite(v)?v.toFixed(n):"—";
+
+// rotate all points around centroid by -roll so face is upright
+function upright(lm){
+  const pts=lm.map(p=>V(p.x,p.y));
+  const cx=pts.reduce((s,p)=>s+p.x,0)/pts.length, cy=pts.reduce((s,p)=>s+p.y,0)/pts.length;
+  const c=V(cx,cy);
+  // roll estimated from interpupillary line
+  const irisL=midPts(pts,[IDX.eyeLPupTop,IDX.eyeLPupBot]), irisR=midPts(pts,[IDX.eyeRPupTop,IDX.eyeRPupBot]);
+  const roll=deg(Math.atan2(irisR.y-irisL.y, irisR.x-irisL.x)); // + = tilted CW in image
+  const th=rad(-roll), cos=Math.cos(th), sin=Math.sin(th);
+  const out=pts.map(p=>{const dx=p.x-c.x,dy=p.y-c.y;return V(c.x+dx*cos-dy*sin, c.y+dx*sin+dy*cos);});
+  return {pts:out, roll};
+}
+const midPts=(P,idx)=>mid(typeof P==='function'?P(idx[0]):P[idx[0]], typeof P==='function'?P(idx[1]):P[idx[1]]);
+
+/* ============================================================================
+   METRIC COMPUTATION  — returns list of {name, value, unit, cat}
+============================================================================ */
+function computeMetrics(rawPts){
+  const {pts,roll}=upright(rawPts);   // canonical upright frame — all angles measured here
+  const M=[];
+  const P=i=>pts[i];
+  const push=(cat,name,value,unit="°")=>M.push({cat,name,value,unit});
+
+  // ---- pose ----
+  const irisL=midPts(P,[IDX.eyeLPupTop,IDX.eyeLPupBot]), irisR=midPts(P,[IDX.eyeRPupTop,IDX.eyeRPupBot]);
+  const ipd=dist(irisL,irisR);
+  const eyeC=mid(irisL,irisR);
+  const browPtEarly=lerp(mid(P(19),P(20)),0.5,mid(P(23),P(24)));
+  const noseX=P(IDX.noseTip).x;
+  const yawEst=clamp((noseX-eyeC.x)/ipd*52, -60,60); // rough yaw proxy (deg)
+  const faceW=dist(P(IDX.jawL),P(IDX.jawR));
+  const faceH=dist(mid(P(19),P(24)),P(IDX.chin));
+  // pitch proxy: eye→chin span shrinks relative to brow→eye span when head tilts up/down
+  const dBE=((browPtEarly.y-irisL.y)+(browPtEarly.y-irisR.y))/2/ipd;
+  const pitchProxy=clamp((0.86-dist(eyeC,P(IDX.chin))/ipd/(dBE/0.27))*30,-45,45);
+  push("Pose","Head tilt (roll) — corrected to 0°",roll,"°");
+  push("Pose","Yaw estimate (left/right turn)",yawEst,"°");
+  push("Pose","Pitch estimate (up/down)",pitchProxy,"°");
+
+  // ---- eyes ----
+  const eyeAngL=deg(Math.atan2(-(P(IDX.eyeLInner).y-P(IDX.eyeLOuter).y),P(IDX.eyeLInner).x-P(IDX.eyeLOuter).x));
+  const eyeAngR=-deg(Math.atan2(-(P(IDX.eyeRInner).y-P(IDX.eyeROuter).y),P(IDX.eyeRInner).x-P(IDX.eyeROuter).x)); // mirrored → positive = outer corner higher
+  push("Eyes","Left eye slant (canthal tilt)",eyeAngL);
+  push("Eyes","Right eye slant (canthal tilt)",eyeAngR);
+  const EAR=(e)=>{ // e = [outer,top1,top2,inner,bot1,bot2] (iBUG eye order)
+    const v=(dist(P(e[1]),P(e[4]))+dist(P(e[2]),P(e[5])))/2;
+    return v/dist(P(e[0]),P(e[3]));
+  };
+  const eyeLidx=[IDX.eyeLOuter,IDX.eyeLInTop,IDX.eyeLPupTop,IDX.eyeLInner,IDX.eyeLInBot,IDX.eyeLPupBot];
+  const eyeRidx=[IDX.eyeROuter,IDX.eyeRInTop,IDX.eyeRPupTop,IDX.eyeRInner,IDX.eyeRInBot,IDX.eyeRPupBot];
+  push("Eyes","Left eye aspect ratio (openness)",EAR(eyeLidx),"");
+  push("Eyes","Right eye aspect ratio (openness)",EAR(eyeRidx),"");
+  push("Eyes","Eye asymmetry (|L−R| slant)",Math.abs(eyeAngL-eyeAngR));
+  const palpebralL=angleAt(P(19),irisL,P(IDX.mouth[3]));
+  const palpebralR=angleAt(P(24),irisR,P(IDX.mouth[3]));
+  push("Eyes","Left palpebral break angle",palpebralL);
+  push("Eyes","Right palpebral break angle",palpebralR);
+
+  // ---- brows ----
+  // iBUG: 17..21 = image-left brow (inner→outer); 22..26 = image-right brow (inner→outer)
+  const browAngL=-deg(Math.atan2(-(P(21).y-P(17).y),P(21).x-P(17).x)); // mirrored → positive = outer end higher
+  const browAngR= deg(Math.atan2(-(P(26).y-P(22).y),P(26).x-P(22).x)); // positive = outer end higher
+  push("Eyebrows","Left brow inclination (outer→inner)",browAngL);
+  push("Eyebrows","Right brow inclination (outer→inner)",browAngR);
+  const browPtL=lerp(P(19),0.5,P(20));
+  const browPtR=lerp(P(23),0.5,P(24));
+  const glabella=lerp(P(27),0.6,P(28));
+  push("Eyebrows","Brow shape angle (glabella ∠ L–C–R)",angleAt(browPtL,glabella,browPtR));
+  push("Eyebrows","Brow-to-eye vertical distance / IPD",( (irisL.y+irisR.y)/2 - (browPtL.y+browPtR.y)/2 )/ipd,"");
+
+  // ---- nose ----
+  const noseAxis=sub(P(IDX.noseTip),P(27));
+  push("Nose","Nose bridge deviation from vertical",180-angBetween(V(0,-1),noseAxis));
+  const nasolabial=angleAt(P(IDX.nostrilL),P(IDX.noseTip),P(IDX.mouth[8]));
+  push("Nose","Nasolabial angle (nostril–tip–upper lip)",nasolabial);
+  const tipL=angleAt(P(IDX.noseAlarL),P(IDX.noseTip),P(IDX.noseAlarR));
+  push("Nose","Nose tip triangle angle",tipL);
+  const lowerFace=dist(mid(P(IDX.mouth[3]),P(IDX.mouth[13])),P(IDX.chin))+dist(glabella,mid(P(IDX.mouth[3]),P(IDX.mouth[13])));
+  push("Nose","Nose length / mid-lower face",dist(P(27),P(IDX.noseTip))/lowerFace,"");
+  push("Nose","Nose width / IPD",dist(P(IDX.noseAlarL),P(IDX.noseAlarR))/ipd,"");
+
+  // ---- lips / mouth ----
+  const mouthAxisAng=deg(Math.atan2(-(P(IDX.mR).y-P(IDX.mL).y),P(IDX.mR).x-P(IDX.mL).x));
+  push("Lips","Mouth line slant (L commissure → R)",mouthAxisAng);
+  const smileUp=deg(Math.atan2(-(P(IDX.mouth[6]).y-P(IDX.mR).y),P(IDX.mouth[6]).x-P(IDX.mR).x)); // inner mouth → left commissure
+  const smileUpR=-deg(Math.atan2(-(P(IDX.mouth[14]).y-P(IDX.mL).y),P(IDX.mouth[14]).x-P(IDX.mL).x)); // mirrored: inner → right commissure
+  push("Lips","Left oral commissure elevation",smileUp);
+  push("Lips","Right oral commissure elevation",smileUpR);
+  push("Lips","Cupid's bow angle",angleAt(P(IDX.cupidL),P(IDX.cupidC),P(IDX.cupidR)));
+  const upperLipTh=dist(P(IDX.mouth[4]),P(IDX.mouth[8]));
+  const lowerLipTh=dist(P(IDX.mouth[12]),P(IDX.mouth[16]));
+  push("Lips","Upper/lower lip fullness ratio",upperLipTh/(lowerLipTh||1),"");
+  push("Lips","Mouth width / face width",dist(P(IDX.mL),P(IDX.mR))/faceW,"");
+
+  // ---- jawline ----
+  push("Jawline","Left jaw (gonion) angle",angleAt(P(IDX.mouth[7]),P(4),P(IDX.jawL)));
+  push("Jawline","Right jaw (gonion) angle",angleAt(P(IDX.mouth[7]),P(12),P(IDX.jawR)));
+  const jawSym=angleAt(P(IDX.jawL),P(IDX.chin),P(IDX.jawR));
+  push("Jawline","Chin/jaw symmetry angle (L–chin–R)",jawSym);
+  push("Jawline","Jawline contour angle (ear–jaw–chin)",angleAt(P(IDX.jawL),P(3),P(IDX.chin)));
+  push("Jawline","Jaw width / face height",dist(P(IDX.jawL),P(IDX.jawR))/faceH,"");
+  push("Jawline","Lower-jaw straightness (deviation % of jaw chord)", (()=>{
+    const a=P(IDX.jawL),b=P(IDX.jawR);
+    const lineLen=dist(a,b);
+    // perpendicular deviation of jaw-midpoints from the straight chord
+    const pts=[1,2,3,4,5,6,7].map(i=>P(IDX.jawL+i));
+    let dev=0; const dir=mul(sub(b,a),1/lineLen); const nrm=V(-dir.y,dir.x);
+    for(const p of pts){const v=sub(p,a);dev+=Math.abs(v.x*nrm.x+v.y*nrm.y);}
+    return dev/pts.length/lineLen*100;
+  })(),"");
+
+  // ---- overall proportions ----
+  const sbn=mid(P(IDX.mouth[3]),P(IDX.mouth[13]));
+  const browMid=mid(P(19),P(24));
+  const t1=dist(P(IDX.noseBridge[0]),browMid)*2.4; // forehead proxy (hairline not in LM68)
+  const t2=dist(glabella,sbn), t3=dist(sbn,P(IDX.chin));
+  push("Proportions","Upper/mid face ratio (forehead proxy ÷ mid)",t1/t2,"");
+  push("Proportions","Mid/lower face ratio (glabella→subnose ÷ subnose→chin)",t2/t3,"");
+  push("Proportions","Face width / height ratio",faceW/faceH,"");
+  push("Proportions","IPD / face width",ipd/faceW,"");
+  push("Proportions","Eye position on face (vert.)", (eyeC.y-P(IDX.jawL).y)/(P(IDX.chin).y-P(IDX.jawL).y),"");
+  push("Proportions","Facial symmetry index (L/R landmark mirror)", (()=>{
+    const cx=(P(IDX.jawL).x+P(IDX.jawR).x)/2;
+    let err=0,n=0;
+    const pairs=[[IDX.eyeLOuter,IDX.eyeROuter],[IDX.eyeLInner,IDX.eyeRInner],[17,26],[19,24],[IDX.nostrilL,IDX.nostrilR]];
+    for(const[a,b]of pairs){
+      const pa=P(a),pb=P(b);
+      const mx=2*cx-pb.x; // mirrored x of b
+      err+=Math.hypot(pa.x-mx,pa.y-pb.y); n++;
+    }
+    return 100*(1-clamp(err/n/(ipd),0,1));
+  })(),"%");
+
+  return M.filter(m=>Number.isFinite(typeof m.value==='number'?m.value:parseFloat(m.value))||typeof m.value==='string');
+}
+function rawRoll(pts){
+  const irisL=midPts(pts,[IDX.eyeLPupTop,IDX.eyeLPupBot]), irisR=midPts(pts,[IDX.eyeRPupTop,IDX.eyeRPupBot]);
+  return deg(Math.atan2(irisR.y-irisL.y, irisR.x-irisL.x));
+}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* ============================================================================
+   CANVAS RENDERING
+============================================================================ */
+const CONTOURS={jaw:[...Array(17).keys()],lBrow:[17,18,19,20,21],rBrow:[22,23,24,25,26],
+  nose:[27,28,29,30,31,32,33,34,35],lEye:[36,37,38,39,40,41,36],rEye:[42,43,44,45,46,47,42],
+  mouth:[...Array(17).keys()].map(i=>i+48).concat([67,48])};
+const COLORS={jaw:'#4f8cff',lBrow:'#22d3ee',rBrow:'#22d3ee',nose:'#a78bfa',lEye:'#34d399',rEye:'#34d399',mouth:'#fbbf24'};
+
+function drawLandmarks(ctx,pts,scale){
+  ctx.save();ctx.scale(scale,scale);
+  for(const[name,idx]of Object.entries(CONTOURS)){
+    ctx.strokeStyle=COLORS[name];ctx.lineWidth=1.6;ctx.beginPath();
+    idx.forEach((i,j)=>{const p=pts[i];j?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});
+    ctx.stroke();
+  }
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  for(const p of pts){ctx.beginPath();ctx.arc(p.x,p.y,1.7,0,7);ctx.fill();}
+  ctx.restore();
+}
+
+function renderPanel(canvasEl,legEl,img,ptsOrig,ptsUp,roll){
+  const W=img.width,H=img.height,maxW=560;
+  const sc=Math.min(1,maxW/W);
+  // pad rotated canvas
+  const th=rad(-roll),cos=Math.cos(th),sin=Math.sin(th);
+  const corners=[V(0,0),V(W,0),V(0,H),V(W,H)].map(p=>rot(p,V(W/2,H/2),th));
+  const minX=Math.min(...corners.map(p=>p.x)),maxX=Math.max(...corners.map(p=>p.x));
+  const minY=Math.min(...corners.map(p=>p.y)),maxY=Math.max(...corners.map(p=>p.y));
+  const ow=maxX-minX, oh=maxY-minY;
+  canvasEl.width=ow*sc; canvasEl.height=oh*sc;
+  canvasEl.style.display='block';
+  const ctx=canvasEl.getContext('2d');
+  ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
+  ctx.drawImage(img,minX,minY,ow,oh,0,0,ow*sc,oh*sc);
+  // upright landmarks: original pts rotated about image center, then shifted
+  const rotPts=ptsOrig.map(p=>add(rot(p,V(W/2,H/2),th),V(-minX,-minY)));
+  drawLandmarks(ctx,rotPts,sc);
+  // horizontal reference line through pupils
+  const irisL=midPts(rotPts,[IDX.eyeLPupTop,IDX.eyeLPupBot]),irisR=midPts(rotPts,[IDX.eyeRPupTop,IDX.eyeRPupBot]);
+  ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=1.2;
+  ctx.beginPath();ctx.moveTo(0,mid(irisL,irisR).y*sc);ctx.lineTo(canvasEl.width,mid(irisL,irisR).y*sc);ctx.stroke();
+  ctx.restore();
+  legEl.innerHTML=`<b>${img.naturalWidth? '' : ''}</b>Shown <b>auto-straightened</b> (rotated ${fmt(-roll)}° to level the pupil line). Dashed line = corrected horizontal reference.`;
+}
+const rot=(p,c,th)=>{const dx=p.x-c.x,dy=p.y-c.y;return V(c.x+dx*Math.cos(th)-dy*Math.sin(th), c.y+dx*Math.sin(th)+dy*Math.cos(th));};
+
+/* ============================================================================
+   SIMILARITY ANALYSIS
+============================================================================ */
+function featureVector(pts){
+  // scale-invariant features normalized by IPD, origin at pupil midpoint
+  const irisL=midPts(pts,[IDX.eyeLPupTop,IDX.eyeLPupBot]),irisR=midPts(pts,[IDX.eyeRPupTop,IDX.eyeRPupBot]);
+  const ipd=dist(irisL,irisR),o=mid(irisL,irisR);
+  const rel=i=>V((pts[i].x-o.x)/ipd,(pts[i].y-o.y)/ipd);
+  const key=[8,16,0,30,31,35,39,42,36,45,54,48,52,51,53,62,21,22,19,24,27,29];
+  const feats=[];
+  for(const i of key)feats.push(rel(i).x,rel(i).y);
+  // plus derived angles/ratios already scale-free
+  return feats;
+}
+function compareSim(A,B){
+  // 1) metric-wise difference
+  const rows=[];
+  const names=new Set([...A.metrics.map(m=>m.name)]);
+  let totalDiff=0,cnt=0;
+  const groups={};
+  for(const m of A.metrics){
+    const o=B.metrics.find(x=>x.name===m.name);
+    if(!o||typeof m.value!=='number'||typeof o.value!=='number')continue;
+    const diff=Math.abs(m.value-o.value);
+    const tol=m.unit==='%'?6:(m.unit==='°'?4:0.06);
+    const score=clamp(100*(1-diff/(tol*3)),0,100);
+    rows.push({name:m.name,valA:m.value,valB:o.value,diff,tol,score,cat:m.cat});
+    totalDiff+=score;cnt++;
+    (groups[m.cat]=groups[m.cat]||[]).push(score);
+  }
+  const geomScore=cnt?totalDiff/cnt:0;
+
+  // 2) landmark shape distance (Procrustes-lite on upright, IPD-normalized coords)
+  const fa=featureVector(A.upright),fb=featureVector(B.upright);
+  let se=0;for(let i=0;i<fa.length;i++)se+=(fa[i]-fb[i])**2;
+  const rms=Math.sqrt(se/fa.length);                 // in IPD units
+  const lmScore=clamp(100*Math.exp(-rms/0.18),0,100);
+
+  // 3) blend
+  const overall=Math.round(0.55*geomScore+0.45*lmScore);
+  return {rows,groups,geomScore,lmScore,rms,overall};
+}
+function verdictFor(s){
+  if(s>=88)return["Very high similarity — near-identical facial geometry (likely same person / twins)","good"];
+  if(s>=75)return["High similarity — strongly matching bone structure","good"];
+  if(s>=60)return["Moderate similarity — shared features but noticeable structural differences","warn"];
+  if(s>=42)return["Low similarity — different facial structure","bad"];
+  return["Very low similarity — structurally distinct faces","bad"];
+}
+
+/* ============================================================================
+   UI PLUMBING
+============================================================================ */
+const state={A:null,B:null};
+const $=id=>document.getElementById(id);
+
+async function loadModels(){
+  const MODEL_URLS=[
+    'https://justadudewhohacks.github.io/face-api.js/models',
+    'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights'
+  ];
+  for(const url of MODEL_URLS){
+    try{
+      await faceapi.nets.tinyFaceDetector.loadFromUri(url);
+      await faceapi.nets.faceLandmark68Net.loadFromUri(url);
+      $('modelDot').classList.add('ok');
+      $('modelStatus').textContent='Models ready — upload a photo to begin.';
+      $('btnAnalyze').disabled=!state.A&&!state.B? true:false;
+      return true;
+    }catch(e){console.warn('model source failed',url,e);}
+  }
+  $('modelDot').classList.add('err');
+  $('modelStatus').textContent='Failed to load models.';
+  const box=$('modelErr');box.classList.remove('hidden');
+  box.textContent='Could not download the face models from the CDN. This page needs an internet connection on first load. Check your network and refresh.';
+  return false;
+}
+
+function bindDrop(which){
+  const drop=$('drop'+which), file=$('file'+which);
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');if(e.dataTransfer.files[0])handleFile(which,e.dataTransfer.files[0]);});
+  file.addEventListener('change',()=>{if(file.files[0])handleFile(which,file.files[0]);});
+}
+function handleFile(which,f){
+  if(!f.type.startsWith('image/'))return alert('Please choose an image file.');
+  const url=URL.createObjectURL(f);
+  const img=new Image();
+  img.onload=async()=>{
+    $('drop'+which).innerHTML=`<div><b>${f.name}</b> (${img.naturalWidth}×${img.naturalHeight})</div><small>click to replace</small><input type="file" accept="image/*" id="file${which}" style="display:none">`;
+    bindRebind(which);
+    await analyzeImage(which,img);
+  };
+  img.onerror=()=>alert('Could not read that image.');
+  img.src=url;
+}
+function bindRebind(which){
+  const drop=$('drop'+which);
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.style.display='none';
+  drop.appendChild(inp);
+  drop.querySelector('div').parentElement; // noop
+  drop.onclick=e=>{e.preventDefault();inp.click();};
+  inp.onchange=()=>{if(inp.files[0])handleFile(which,inp.files[0]);};
+}
+
+let modelsOK=false;
+async function analyzeImage(which,img){
+  if(!modelsOK)return;
+  $('modelStatus').textContent=`Detecting landmarks in Photo ${which}…`;
+  let det;
+  try{
+    det=await faceapi.detectSingleFace(img,new faceapi.TinyFaceDetectorOptions({inputSize:416,scoreThreshold:0.3}))
+           .withFaceLandmarks();
+  }catch(e){det=null;}
+  if(!det){
+    $('modelStatus').textContent=`No face found in Photo ${which}. Try a clearer, more frontal photo.`;
+    state[which]=null;refreshRun();return;
+  }
+  const lm=det.landmarks.positions.map(p=>V(p.x,p.y));
+  const res=upright(lm);
+  const metrics=computeMetrics(res.pts);
+  state[which]={img,orig:lm,upright:res.pts,roll:res.roll,metrics};
+  renderPanel($('cv'+which),$('leg'+which),img,lm,res.pts,res.roll);
+  $('modelStatus').textContent=`Photo ${which}: face detected (confidence ${(det.score||det.detection? (det.detection?det.detection.score:det.score):0.99).toFixed(2)}), tilt ${fmt(res.roll)}° corrected.`;
+  refreshRun();
+  maybeAutoRun();
+}
+function refreshRun(){
+  $('btnAnalyze').disabled=!(state.A||state.B);
+}
+function maybeAutoRun(){
+  if(state.A&&state.B)runAnalysis();
+}
+
+function metricTable(el,metrics){
+  let html='<table><thead><tr><th>Metric</th><th style="text-align:right">Value</th></tr></thead><tbody>';
+  let lastCat='';
+  for(const m of metrics){
+    if(m.cat!==lastCat){html+=`<tr class="cat"><td colspan="2">${m.cat}</td></tr>`;lastCat=m.cat;}
+    const val=typeof m.value==='number'?fmt(m.value)+(m.unit==='°'?'°':''):m.value;
+    html+=`<tr><td>${m.name}</td><td class="num">${val}${typeof m.value==='number'&&m.unit&&m.unit!=='°'?(' '+m.unit):''}</td></tr>`;
+  }
+  el.innerHTML=html+'</tbody></table>';
+}
+function poseBox(which){
+  const s=state[which];if(!s)return '';
+  const r=s.roll, ar=Math.abs(r);
+  const cls=ar<2?'good':ar<8?'warn':'bad';
+  const txt=ar<2?'Level — no correction needed':ar<8?'Mild tilt — auto-corrected':'Strong tilt — auto-corrected before measuring';
+  const yw=metricVal(s.metrics,'Yaw estimate (left/right turn)'),pt=metricVal(s.metrics,'Pitch estimate (up/down)');
+  return `<div class="row" style="margin:0 0 10px">
+    <span class="pill ${cls}">Roll ${fmt(r)}° → 0°</span>
+    <span class="pill warn">Yaw ≈ ${fmt(yw)}°</span>
+    <span class="pill warn">Pitch ≈ ${fmt(pt)}°</span></div>
+    <div class="note">${txt}. All angles below are measured on the straightened image.</div>`;
+}
+const metricVal=(ms,n)=>{const m=ms.find(x=>x.name===n);return m?m.value:NaN;};
+
+function runAnalysis(){
+  if(!state.A&&!state.B)return;
+  $('resultsWrap').classList.remove('hidden');
+  for(const w of ['A','B']){
+    const has=!!state[w];
+    $('pose'+w).innerHTML=has?poseBox(w):'<div class="note">No photo loaded.</div>';
+    metricTable($('tbl'+w),has?state[w].metrics:[]);
+    document.querySelector('#tbl'+w).style.display=has?'table':'none';
+  }
+  const sim=$('simBody');
+  if(state.A&&state.B){
+    const c=compareSim(state.A,state.B);
+    const [vt,vc]=verdictFor(c.overall);
+    let html=`<div class="bigscore">${c.overall}<span style="font-size:20px;color:var(--mut)"> / 100</span></div>
+      <div class="verdict"><span class="pill ${vc}">${vt}</span></div>
+      <div class="row" style="justify-content:center;margin-bottom:14px">
+        <span class="note">Landmark-shape RMS: <b>${fmt(c.rms,3)}</b> IPD units → score <b>${Math.round(c.lmScore)}</b></span>
+        <span class="note">Metric agreement score: <b>${Math.round(c.geomScore)}</b></span>
+      </div>
+      <table><thead><tr><th>Category</th><th style="text-align:right">A</th><th style="text-align:right">B</th><th style="text-align:right">Δ</th><th>Tolerance</th><th style="width:32%">Match</th></tr></thead><tbody>`;
+    let lastCat='';
+    for(const r of c.rows.sort((a,b)=>a.cat.localeCompare(b.cat))){
+      if(r.cat!==lastCat){html+=`<tr class="cat"><td colspan="6">${r.cat}</td></tr>`;lastCat=r.cat;}
+      const cls=r.score>75?'good':r.score>45?'warn':'bad';
+      const u=r.unitless?'':'';
+      html+=`<tr><td>${r.name}</td>
+        <td class="num">${fmt(r.valA, r.tol<0.1?3:1)}</td>
+        <td class="num">${fmt(r.valB, r.tol<0.1?3:1)}</td>
+        <td class="num">${fmt(r.diff, r.tol<0.1?3:1)}</td>
+        <td><span class="pill ${cls}">±${fmt(r.tol, r.tol<0.1?2:0)}${r.name.includes('/')||r.name.includes('ratio')||r.name.includes('index')?'':'°'}</span></td>
+        <td><div class="barwrap"><div class="bar" style="width:${r.score}%"></div></div></td></tr>`;
+    }
+    html+='</tbody></table><div class="note">Comparison uses <b>scale-invariant</b> data: IPD-normalized landmark positions (after roll correction) plus angular/ratio metrics, so differing photo distances do not penalize the score. Severe yaw/pitch differences still reduce reliability — use similar head poses for best results.</div>';
+    sim.innerHTML=html;
+  }else{
+    sim.innerHTML='<div class="note">Load <b>two</b> photos to run the similarity comparison. Single-photo structural analysis is shown above.</div>';
+  }
+  $('resultsWrap').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+$('btnAnalyze').onclick=runAnalysis;
+$('btnReset').onclick=()=>location.reload();
+bindDrop('A');bindDrop('B');
+loadModels().then(ok=>{modelsOK=ok;});
+</script>
+</body>
+</html>
