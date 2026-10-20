@@ -6,8 +6,8 @@ import { FacialMetrics } from './utils/faceAnalysis';
 import { DrawOptions } from './utils/drawing';
 
 const MODEL_URLS = [
-  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/',
   'https://justadudewhohacks.github.io/face-api.js/models/',
+  'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights/',
   'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/',
 ];
 
@@ -45,8 +45,21 @@ function App() {
 
       for (const url of MODEL_URLS) {
         try {
-          await faceapi.nets.tinyFaceDetector.loadFromUri(url);
-          await faceapi.nets.faceLandmark68Net.loadFromUri(url);
+          // Add timeout to prevent hanging
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+          await Promise.race([
+            (async () => {
+              await faceapi.nets.tinyFaceDetector.loadFromUri(url);
+              await faceapi.nets.faceLandmark68Net.loadFromUri(url);
+            })(),
+            new Promise((_, reject) => {
+              controller.signal.addEventListener('abort', () => reject(new Error('Timeout')));
+            })
+          ]);
+
+          clearTimeout(timeoutId);
           setModelsLoaded(true);
           setLoadingModels(false);
           return;
@@ -56,7 +69,13 @@ function App() {
         }
       }
 
-      setModelError('Failed to load face detection models from all sources. Please check your internet connection and refresh.');
+      setModelError(
+        'Failed to load AI models. This usually means:\n' +
+        '• No internet connection (models are downloaded from CDN)\n' +
+        '• CDN is temporarily unavailable\n' +
+        '• Browser blocked cross-origin requests\n\n' +
+        'Please check your internet connection and refresh the page.'
+      );
       setLoadingModels(false);
     };
     loadModels();
@@ -124,7 +143,7 @@ function App() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <h2 className="text-xl font-bold text-white mb-2">Model Loading Error</h2>
-          <p className="text-gray-400 mb-4">{modelError}</p>
+          <p className="text-gray-400 mb-4 whitespace-pre-line">{modelError}</p>
           <button
             onClick={() => window.location.reload()}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
