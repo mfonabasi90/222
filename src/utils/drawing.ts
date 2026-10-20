@@ -48,16 +48,18 @@ export function drawFaceAnalysis(
   imageWidth: number,
   imageHeight: number
 ) {
+  if (options.showOcclusion) {
+    drawOcclusionRegions(ctx, landmarks, occlusion);
+  }
+
+  // All feature overlays are drawn in the CANONICAL (pose-corrected) frame so
+  // that displayed angles/lines reflect the upright, centered face.
   if (options.showLandmarks) {
     drawLandmarks(ctx, landmarks, canonicalLandmarks);
   }
 
   if (options.showPoseAxes) {
     drawPoseAxes(ctx, landmarks, pose);
-  }
-
-  if (options.showOcclusion) {
-    drawOcclusionRegions(ctx, landmarks, occlusion);
   }
 
   if (options.showEyeAngles) {
@@ -81,7 +83,7 @@ export function drawFaceAnalysis(
   }
 
   if (options.showQualityIndicators) {
-    drawQualityIndicators(ctx, landmarks, occlusion);
+    drawQualityIndicators(ctx, canonicalLandmarks, occlusion);
   }
 }
 
@@ -106,32 +108,32 @@ function drawLandmarks(ctx: CanvasRenderingContext2D, original: Point[], canonic
 function drawPoseAxes(ctx: CanvasRenderingContext2D, landmarks: Point[], pose: Pose) {
   const eyeCenter = midpoint(landmarks[36], landmarks[45]);
 
-  // Draw original (tilted) horizontal axis
+  // Draw the measured (tilted) inter-ocular axis — this is what we correct away
+  const tiltedAxisLen = Math.max(60, distance(landmarks[36], landmarks[45]) * 0.7);
+  const rollRad = (pose.roll * Math.PI) / 180;
   ctx.strokeStyle = '#ffffff44';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.moveTo(eyeCenter.x - 80, eyeCenter.y);
-  ctx.lineTo(eyeCenter.x + 80, eyeCenter.y);
+  ctx.moveTo(eyeCenter.x - tiltedAxisLen * Math.cos(rollRad), eyeCenter.y - tiltedAxisLen * Math.sin(rollRad));
+  ctx.lineTo(eyeCenter.x + tiltedAxisLen * Math.cos(rollRad), eyeCenter.y + tiltedAxisLen * Math.sin(rollRad));
   ctx.stroke();
 
-  // Draw corrected horizontal axis (roll-corrected)
+  // Draw corrected horizontal axis (level reference after de-rotation)
   ctx.strokeStyle = COLORS.poseAxis;
   ctx.lineWidth = 2;
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.moveTo(eyeCenter.x - 80, eyeCenter.y);
-  ctx.lineTo(eyeCenter.x + 80, eyeCenter.y);
+  ctx.moveTo(eyeCenter.x - tiltedAxisLen, eyeCenter.y);
+  ctx.lineTo(eyeCenter.x + tiltedAxisLen, eyeCenter.y);
   ctx.stroke();
 
-  // Draw roll arc
+  // Draw roll arc between the two axes
   ctx.strokeStyle = COLORS.poseAxis;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   const arcRadius = 40;
-  const startAngle = 0;
-  const endAngle = (-pose.roll * Math.PI) / 180;
-  ctx.arc(eyeCenter.x, eyeCenter.y, arcRadius, startAngle, endAngle, pose.roll > 0);
+  ctx.arc(eyeCenter.x, eyeCenter.y, arcRadius, 0, rollRad, rollRad > 0);
   ctx.stroke();
 
   // Vertical axis
