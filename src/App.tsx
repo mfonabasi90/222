@@ -123,33 +123,38 @@ function App() {
     e.preventDefault();
   };
 
-  const removeImage = useCallback((setter: React.Dispatch<React.SetStateAction<string[]>>, index: number) => {
-    setter(prev => prev.filter((_, i) => i !== index));
+  // Handle analysis result from a single image (keyed by image URL so results stay
+  // aligned with images even when earlier thumbnails are removed)
+  const makeResultHandler = useCallback((setter: React.Dispatch<React.SetStateAction<ImageAnalysisResult[]>>) => {
+    return (result: ImageAnalysisResult | null, imageUrl: string) => {
+      setter(prev => {
+        const idx = prev.findIndex(r => r && r.imageUrl === imageUrl);
+        const next = [...prev];
+        if (result) {
+          if (idx >= 0) next[idx] = result;
+          else next.push(result);
+        } else if (idx >= 0) {
+          next.splice(idx, 1);
+        }
+        return next.filter(Boolean);
+      });
+    };
   }, []);
 
-  // Handle analysis result from a single image
-  const handleResult1 = useCallback((result: ImageAnalysisResult | null, index: number) => {
-    setResults1(prev => {
-      const next = [...prev];
-      if (result) {
-        next[index] = result;
-      } else {
-        next.splice(index, 1);
-      }
-      return next.filter(Boolean);
-    });
-  }, []);
+  const handleResult1 = makeResultHandler(setResults1);
+  const handleResult2 = makeResultHandler(setResults2);
 
-  const handleResult2 = useCallback((result: ImageAnalysisResult | null, index: number) => {
-    setResults2(prev => {
-      const next = [...prev];
-      if (result) {
-        next[index] = result;
-      } else {
-        next.splice(index, 1);
-      }
-      return next.filter(Boolean);
+  const removeImage = useCallback((
+    imgSetter: React.Dispatch<React.SetStateAction<string[]>>,
+    resSetter: React.Dispatch<React.SetStateAction<ImageAnalysisResult[]>>,
+    index: number
+  ) => {
+    let removedUrl: string | undefined;
+    imgSetter(prev => {
+      removedUrl = prev[index];
+      return prev.filter((_, i) => i !== index);
     });
+    resSetter(prev => prev.filter(r => r.imageUrl !== removedUrl));
   }, []);
 
   const toggleDrawOption = (key: keyof DrawOptions) => {
@@ -230,7 +235,7 @@ function App() {
             onFileUpload={handleFileUpload(setImages1)}
             onDrop={handleDrop(setImages1)}
             onDragOver={handleDragOver}
-            onRemoveImage={(i) => removeImage(setImages1, i)}
+            onRemoveImage={(i) => removeImage(setImages1, setResults1, i)}
             onResult={handleResult1}
             onLoadingChange={setLoading1}
             onError={setError1}
@@ -249,7 +254,7 @@ function App() {
             onFileUpload={handleFileUpload(setImages2)}
             onDrop={handleDrop(setImages2)}
             onDragOver={handleDragOver}
-            onRemoveImage={(i) => removeImage(setImages2, i)}
+            onRemoveImage={(i) => removeImage(setImages2, setResults2, i)}
             onResult={handleResult2}
             onLoadingChange={setLoading2}
             onError={setError2}
@@ -394,7 +399,7 @@ interface PersonSectionProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onRemoveImage: (index: number) => void;
-  onResult: (result: ImageAnalysisResult | null, index: number) => void;
+  onResult: (result: ImageAnalysisResult | null, imageUrl: string) => void;
   onLoadingChange: (loading: boolean) => void;
   onError: (error: string | null) => void;
   drawOptions: DrawOptions;
@@ -474,7 +479,7 @@ function PersonSection({
         <FaceCanvas
           image={images[safeIdx]}
           label={`${label} (Image ${safeIdx + 1}/${images.length})`}
-          onAnalysisComplete={(result) => onResult(result, safeIdx)}
+          onAnalysisComplete={(result, imageUrl) => onResult(result, imageUrl)}
           onLoadingChange={onLoadingChange}
           onError={onError}
           drawOptions={drawOptions}

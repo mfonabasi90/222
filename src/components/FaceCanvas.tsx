@@ -23,7 +23,7 @@ export interface ImageAnalysisResult {
 interface FaceCanvasProps {
   image: string | null;
   label: string;
-  onAnalysisComplete: (result: ImageAnalysisResult | null) => void;
+  onAnalysisComplete: (result: ImageAnalysisResult | null, imageUrl: string) => void;
   onLoadingChange: (loading: boolean) => void;
   onError: (error: string | null) => void;
   drawOptions: DrawOptions;
@@ -41,6 +41,7 @@ export default function FaceCanvas({
 }: FaceCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const lastReportedUrlRef = useRef<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<ImageAnalysisResult | null>(null);
   const [noFace, setNoFace] = useState(false);
 
@@ -48,6 +49,7 @@ export default function FaceCanvas({
     if (!image || !canvasRef.current || !modelsReady) return;
 
     let cancelled = false;
+    lastReportedUrlRef.current = null;
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -93,7 +95,10 @@ export default function FaceCanvas({
         if (!result) {
           setNoFace(true);
           setAnalysisResult(null);
-          onAnalysisComplete(null);
+          if (lastReportedUrlRef.current !== image) {
+            lastReportedUrlRef.current = image;
+            onAnalysisComplete(null, image);
+          }
           onLoadingChange(false);
           return;
         }
@@ -144,7 +149,10 @@ export default function FaceCanvas({
         };
 
         setAnalysisResult(analysisResult);
-        onAnalysisComplete(analysisResult);
+        if (lastReportedUrlRef.current !== image) {
+          lastReportedUrlRef.current = image;
+          onAnalysisComplete(analysisResult, image);
+        }
 
         // Draw analysis
         drawFaceAnalysis(ctx, undistorted, canonicalLandmarks, pose, occlusion, drawOptions, w, h);
@@ -170,7 +178,7 @@ export default function FaceCanvas({
     return () => { cancelled = true; };
   }, [image, modelsReady]);
 
-  // Redraw when options change
+  // Redraw when options change or a new analysis completes
   useEffect(() => {
     if (!analysisResult || !canvasRef.current || !imgRef.current) return;
 

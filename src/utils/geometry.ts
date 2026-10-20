@@ -94,7 +94,8 @@ export function estimatePose(landmarks: Point[]): Pose {
   const leftMouth = landmarks[48];
   const rightMouth = landmarks[54];
 
-  // Roll: angle of inter-ocular line from horizontal
+  // Roll: angle of inter-ocular line from horizontal (screen-space convention,
+  // consistent with rotate2D which rotates CW for positive angles)
   const roll = angle2D(leftEyeOuter, rightEyeOuter);
 
   // Eye center and inter-ocular distance
@@ -105,8 +106,8 @@ export function estimatePose(landmarks: Point[]): Pose {
     return { roll, pitch: 0, yaw: 0, confidence: 0.1 };
   }
 
-  // Roll-correct nose position for yaw estimation
-  const correctedNose = rotate2D(noseTip, eyeCenter, -roll);
+  // Roll-correct nose position for yaw estimation (rotate by +roll to undo tilt)
+  const correctedNose = rotate2D(noseTip, eyeCenter, roll);
   const noseOffsetX = (correctedNose.x - eyeCenter.x) / iod;
 
   // Yaw: nose horizontal offset. In frontal view, nose is centered.
@@ -115,7 +116,7 @@ export function estimatePose(landmarks: Point[]): Pose {
   const yaw = noseOffsetX * 60;
 
   // Pitch: vertical relationship between nose, eyes, and chin
-  const correctedChin = rotate2D(chin, eyeCenter, -roll);
+  const correctedChin = rotate2D(chin, eyeCenter, roll);
   const eyeToChin = correctedChin.y - eyeCenter.y;
   const eyeToNose = correctedNose.y - eyeCenter.y;
 
@@ -126,7 +127,7 @@ export function estimatePose(landmarks: Point[]): Pose {
 
   // Confidence based on how well the landmarks fit expected proportions
   const mouthCenter = midpoint(leftMouth, rightMouth);
-  const correctedMouth = rotate2D(mouthCenter, eyeCenter, -roll);
+  const correctedMouth = rotate2D(mouthCenter, eyeCenter, roll);
   const mouthOffsetX = Math.abs((correctedMouth.x - eyeCenter.x) / iod);
 
   // Lower confidence if landmarks are asymmetric (suggesting extreme pose or detection error)
@@ -143,14 +144,25 @@ export function estimatePose(landmarks: Point[]): Pose {
 export function canonicalizeLandmarks(landmarks: Point[], pose: Pose): Point[] {
   const eyeCenter = midpoint(landmarks[36], landmarks[45]);
 
-  // Step 1: Roll correction (exact 2D rotation)
-  let corrected = landmarks.map((p) => rotate2D(p, eyeCenter, -pose.roll));
+  // Step 1: Roll correction (exact 2D rotation). pose.roll is the measured screen
+  // tilt; rotate2D(p, c, roll) undoes it because rotate2D applies -angle internally.
+  let corrected = landmarks.map((p) => rotate2D(p, eyeCenter, pose.roll));
+
+  // Step 1b: Center the face horizontally on the vertical midline through the
+  // eye center. After de-rotation this removes residual in-plane offset so the
+  // canonical frame is upright AND centered before angles are displayed/measured.
+  {
+    const jawMid = midpoint(corrected[2], corrected[14]);
+    const dx = eyeCenter.x - jawMid.x;
+    corrected = corrected.map((p) => ({ x: p.x + dx, y: p.y }));
+  }
 
   // Step 2: Yaw correction (approximate perspective undistortion)
   // When head turns by yaw angle, the face appears compressed on the far side
-  // We apply a horizontal expansion to compensate
+  // We apply a horizontal expansion to compensate. The correction factor is
+  // clamped so extreme/unreliable yaw estimates cannot blow up the geometry.
   const yawRad = (pose.yaw * Math.PI) / 180;
-  const yawFactor = 1 / Math.max(0.5, Math.cos(yawRad));
+  const yawFactor = Math.min(1.6, 1 / Math.max(0.5, Math.cos(yawRad)));
 
   corrected = corrected.map((p) => ({
     x: eyeCenter.x + (p.x - eyeCenter.x) * yawFactor,
