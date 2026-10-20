@@ -10,6 +10,7 @@ interface FaceCanvasProps {
   onLoadingChange: (loading: boolean) => void;
   onError: (error: string | null) => void;
   drawOptions: DrawOptions;
+  modelsReady: boolean;
 }
 
 export default function FaceCanvas({
@@ -19,6 +20,7 @@ export default function FaceCanvas({
   onLoadingChange,
   onError,
   drawOptions,
+  modelsReady,
 }: FaceCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -26,7 +28,9 @@ export default function FaceCanvas({
   const [noFace, setNoFace] = useState(false);
 
   useEffect(() => {
-    if (!image || !canvasRef.current) return;
+    if (!image || !canvasRef.current || !modelsReady) return;
+
+    let cancelled = false;
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -34,6 +38,8 @@ export default function FaceCanvas({
     imgRef.current = img;
 
     img.onload = async () => {
+      if (cancelled) return;
+
       onLoadingChange(true);
       onError(null);
       setNoFace(false);
@@ -57,8 +63,17 @@ export default function FaceCanvas({
         // Draw image
         ctx.drawImage(img, 0, 0, w, h);
 
-        // Detect face landmarks
-        const result = await faceapi.detectSingleFace(canvas).withFaceLandmarks();
+        // Detect face using TinyFaceDetector (which we actually loaded)
+        const options = new faceapi.TinyFaceDetectorOptions({
+          inputSize: 416,
+          scoreThreshold: 0.3,
+        });
+
+        const result = await faceapi
+          .detectSingleFace(canvas, options)
+          .withFaceLandmarks();
+
+        if (cancelled) return;
 
         if (!result) {
           setNoFace(true);
@@ -78,18 +93,28 @@ export default function FaceCanvas({
         // Draw analysis
         drawFaceAnalysis(ctx, landmarks, drawOptions, w, h);
       } catch (err) {
+        if (cancelled) return;
         console.error('Face detection error:', err);
-        onError('Failed to detect face. Please try another image.');
+        const message = err instanceof Error ? err.message : 'Failed to detect face';
+        onError(message + '. Please try another image with a clear, front-facing photo.');
+        onLoadingChange(false);
       }
 
-      onLoadingChange(false);
+      if (!cancelled) {
+        onLoadingChange(false);
+      }
     };
 
     img.onerror = () => {
+      if (cancelled) return;
       onError('Failed to load image.');
       onLoadingChange(false);
     };
-  }, [image]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [image, modelsReady]);
 
   // Redraw when options change
   useEffect(() => {
