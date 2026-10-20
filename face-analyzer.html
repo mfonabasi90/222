@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Face Structure &amp; Similarity Analyzer</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2b; --panel2:#0e1626; --line:#1f2c45;
+    --txt:#e5ecf7; --dim:#8ea0bd; --accent:#38bdf8; --good:#4ade80;
+    --fair:#fbbf24; --poor:#f87171; --occ:#6b7280;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:60px}
+  header{padding:26px 20px 10px;text-align:center}
+  header h1{margin:0;font-size:24px;letter-spacing:.3px}
+  header p{margin:6px 0 0;color:var(--dim);font-size:13px}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 16px}
+  .statusbar{display:flex;gap:10px;align-items:center;justify-content:center;margin:14px 0;flex-wrap:wrap}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--fair);display:inline-block}
+  .dot.ok{background:var(--good)} .dot.err{background:var(--poor)}
+  #statusMsg{color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:15px;color:var(--accent)}
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;
+        color:var(--dim);cursor:pointer;transition:.15s}
+  .drop:hover,.drop.over{border-color:var(--accent);color:var(--txt);background:var(--panel2)}
+  canvas.view{width:100%;border-radius:10px;margin-top:10px;display:none;background:#000}
+  .thumbs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .thumb{position:relative;width:56px;height:56px;border-radius:8px;overflow:hidden;
+         border:2px solid var(--line);cursor:pointer;flex:none}
+  .thumb.sel{border-color:var(--accent)}
+  .thumb img{width:100%;height:100%;object-fit:cover}
+  .thumb .x{position:absolute;top:1px;right:3px;font-size:11px;color:#fff;background:#0008;
+            border-radius:4px;padding:0 4px;display:none}
+  .thumb:hover .x{display:block}
+  .rowbtns{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{background:#16233b;color:var(--txt);border:1px solid var(--line);border-radius:8px;
+         padding:7px 12px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#04121f;border:none;font-weight:600}
+  button:disabled{opacity:.45;cursor:default}
+  .toggles{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:var(--dim)}
+  .toggles label{display:flex;gap:5px;align-items:center;cursor:pointer}
+  .err{color:var(--poor);font-size:12.5px;margin-top:8px;min-height:16px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{color:var(--dim);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:var(--panel)}
+  td{padding:6px 8px;border-bottom:1px solid #16223a;vertical-align:top}
+  tr.cat td{color:var(--accent);font-weight:700;background:var(--panel2);font-size:12px}
+  .q-good{color:var(--good)} .q-fair{color:var(--fair)} .q-poor{color:var(--poor)} .q-occluded{color:var(--occ)}
+  .badge{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);
+         color:var(--dim);margin-left:6px}
+  .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .scroll{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  .bigscore{text-align:center;padding:18px 10px}
+  .bigscore .v{font-size:52px;font-weight:800;line-height:1}
+  .bigscore .verdict{font-size:15px;margin-top:6px;color:var(--txt)}
+  .meter{height:12px;border-radius:99px;background:#0a1120;border:1px solid var(--line);
+         margin:14px auto 4px;max-width:420px;position:relative;overflow:hidden}
+  .meter i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;transition:width .5s}
+  .note{color:var(--dim);font-size:12px;max-width:720px;margin:6px auto 0}
+  .contrib{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+  .crow{display:flex;align-items:center;gap:8px;font-size:12px}
+  .crow .nm{flex:1;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crow .bar{height:7px;border-radius:99px;min-width:2px}
+  .pos{background:var(--good)} .neg{background:var(--poor)}
+  .legend{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--dim);margin-top:6px}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .hint{color:var(--dim);font-size:12px;margin-top:8px}
+  .section-title{margin:26px 0 12px;font-size:18px;color:var(--accent)}
+  .cmpimgs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .cmpimgs canvas{width:100%;border-radius:10px;background:#000}
+  .cmpimgs figcaption{font-size:12px;color:var(--dim);text-align:center;margin-top:4px}
+  details summary{cursor:pointer;color:var(--dim);font-size:12.5px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Face Structure &amp; Similarity Analyzer</h1>
+  <p>Facial geometry · part angles · jaw line · head-tilt correction · two-photo comparison — all in your browser.</p>
+</header>
+
+<div class="wrap">
+  <div class="statusbar"><span class="dot" id="modelDot"></span><span id="statusMsg">Loading face-detection models…</span></div>
+
+  <div class="grid">
+    <!-- PERSON A -->
+    <div class="card">
+      <h2>Person / Photo A</h2>
+      <div class="drop" id="dropA">Click or drop images here<br><small>(multiple allowed — best face is used)</small></div>
+      <input type="file" id="fileA" accept="image/*" multiple hidden>
+      <div class="thumbs" id="thumbsA"></div>
+      <canvas class="view" id="viewA"></canvas>
+      <div class="rowbtns">
+        <button id="uprightA" disabled>⤴ Show upright (tilt-corrected)</button>
+        <button id="dlA" disabled>Save PNG</button>
+      </div>
+      <div class="err" id="errA"></div>
+    </div>
+    <!-- PERSON B -->
+    <div class="card">
+      <h2>Person / Photo B</h2>
+      <div class="drop" id="dropB">Click or drop images here<br><small>(multiple allowed — best face is used)</small></div>
+      <input type="file" id="fileB" accept="image/*" multiple hidden>
+      <div class="thumbs" id="thumbsB"></div>
+      <canvas class="view" id="viewB"></canvas>
+      <div class="rowbtns">
+        <button id="uprightB" disabled>⤴ Show upright (tilt-corrected)</button>
+        <button id="dlB" disabled>Save PNG</button>
+      </div>
+      <div class="err" id="errB"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Overlays</h2>
+    <div class="toggles" id="toggles"></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:#00ff88"></i>canonical landmarks</span>
+      <span><i class="swatch" style="background:#ffd93d"></i>pose axes / tilt arc</span>
+      <span><i class="swatch" style="background:#ff6b6b"></i>eye angles</span>
+      <span><i class="swatch" style="background:#6bcfff"></i>nose</span>
+      <span><i class="swatch" style="background:#ff9ff3"></i>mouth</span>
+      <span><i class="swatch" style="background:#a29bfe"></i>jaw line</span>
+    </div>
+  </div>
+
+  <h2 class="section-title">Single-image analysis (computed in the tilt-corrected “canonical” frame)</h2>
+  <div class="grid">
+    <div class="card">
+      <h2>Metric table — A</h2>
+      <div class="scroll"><table id="tblA"><thead><tr><th>Metric</th><th>Value ± CI</th><th>Q</th><th>ID</th></tr></thead><tbody></tbody></table></div>
+      <div class="hint" id="hintA"></div>
+    </div>
+    <div class="card">
+      <h2>Metric table — B</h2>
+      <div class="scroll"><table id="tblB"><thead><tr><th>Metric</th><th>Value ± CI</th><th>Q</th><th>ID</th></tr></thead><tbody></tbody></table></div>
+      <div class="hint" id="hintB"></div>
+    </div>
+  </div>
+
+  <h2 class="section-title">Similarity comparison</h2>
+  <div class="card">
+    <div class="rowbtns" style="margin-top:0">
+      <button class="primary" id="btnCompare" disabled>Compare A vs B</button>
+      <label style="display:flex;gap:6px;align-items:center;color:var(--dim);font-size:12.5px">
+        <input type="checkbox" id="ageNorm"> age-normalized comparison
+      </label>
+    </div>
+    <div id="cmpArea" style="display:none">
+      <div class="bigscore">
+        <div class="v" id="scoreV">–</div>
+        <div class="meter"><i id="scoreBar" style="width:0%"></i></div>
+        <div class="verdict" id="verdict"></div>
+        <div class="note" id="scoreNote"></div>
+      </div>
+      <div class="cmpimgs">
+        <figure style="margin:0"><canvas id="cmpA"></canvas><figcaption>A — canonical overlay</figcaption></figure>
+        <figure style="margin:0"><canvas id="cmpB"></canvas><figcaption>B — canonical overlay</figcaption></figure>
+      </div>
+      <div class="grid">
+        <div>
+          <h2 style="font-size:14px">Metric-by-metric differences</h2>
+          <div class="scroll" style="max-height:420px"><table id="tblCmp"><thead><tr><th>Metric</th><th>A</th><th>B</th><th>|Δ|</th><th>Tol</th><th>Verdict</th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div>
+          <h2 style="font-size:14px">What drives the score</h2>
+          <div style="font-size:12px;color:var(--dim)">Supporting (similar):</div>
+          <div class="contrib" id="supList"></div>
+          <div style="font-size:12px;color:var(--dim);margin-top:10px">Opposing (different):</div>
+          <div class="contrib" id="oppList"></div>
+          <details><summary>Methodology</summary>
+            <div class="note" style="margin:8px 0;text-align:left">
+              Each photo's head pose (roll/yaw/pitch) is estimated from 68 facial landmarks against a canonical 3D
+              head model; landmarks are then rotated/scaled into an upright, centered "canonical" frame so that
+              tilted photos measure the same as straight ones. Every geometric metric carries a bootstrap
+              uncertainty (±95% CI). Comparison converts each metric's residual (observed difference beyond
+              measurement noise and — when enabled — expected developmental change) into a weighted
+              log-likelihood ratio; weights favour identity-stable traits (canthal tilt, jaw angle…) and
+              penalise expression/styling-sensitive ones (mouth openness, brows). Results are heuristic,
+              <b>not</b> forensic identification.</div>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="section-title">Side-by-side geometry (after tilt correction)</h2>
+  <div class="card" id="sxsCard">
+    <canvas id="sxs" style="width:100%;border-radius:10px;background:#000;display:none"></canvas>
+    <div class="hint" id="sxsHint">Load at least one photo to see the pose-normalized overlay.</div>
+  </div>
+
+  <h2 class="section-title">Silhouette overlay (normalized alignment)</h2>
+  <div class="card" id="ovlCard">
+    <canvas id="ovl" style="width:100%;max-width:560px;margin:0 auto;display:block;border-radius:10px;background:#000"></canvas>
+    <div class="legend">
+      <span><i class="swatch" style="background:#38bdf8"></i>A jaw outline</span>
+      <span><i class="swatch" style="background:#f472b6"></i>B jaw outline</span>
+      <span><i class="swatch" style="background:#ffd93d"></i>eye lines</span>
+      <span style="color:var(--dim)">Faces are centered on the eye midpoint and scaled to equal inter-ocular distance; opacity slider blends A/B.</span>
+    </div>
+    <div class="rowbtns" style="justify-content:center">
+      <input type="range" id="ovlAlpha" min="0" max="100" value="50" style="width:220px">
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+(function(){
+'use strict';
+if (!window.faceapi) {
+  document.getElementById('statusMsg').textContent =
+    'Failed to load face-api.js from CDN — check your internet connection and reload.';
+  document.getElementById('modelDot').className = 'dot err';
+  return;
+}
+
+/* ============================================================
+   GEOMETRY  (ported from src/utils/geometry.ts)
+   ============================================================ */
+const RAD = Math.PI/180;
+const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
+const mid  = (a,b)=>({x:(a.x+b.x)/2, y:(a.y+b.y)/2});
+const angle2D=(from,to)=>Math.atan2(to.y-from.y, to.x-from.x)/RAD;
+// rotate point by -angleDeg about center (positive angle = undo a CW screen tilt)
+function rot(p,c,deg){const r=-deg*RAD,cs=Math.cos(r),sn=Math.sin(r),dx=p.x-c.x,dy=p.y-c.y;
+  return {x:c.x+dx*cs-dy*sn, y:c.y+dx*sn+dy*cs};}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* Canonical 3D head model (Farkas-based mm), mapped to dlib-68 indices.
+   Model frame: x right, y DOWN (matches image coords), z toward camera. */
+const MODEL3D=[
+ [30,{x:0,y:0,z:0}],
+ [8,{x:0,y:63.6,z:-12.5}],
+ [36,{x:-43.3,y:-32.7,z:-26.0}],[45,{x:43.3,y:-32.7,z:-26.0}],
+ [39,{x:-30.0,y:-32.7,z:-26.0}],[42,{x:30.0,y:-32.7,z:-26.0}],
+ [48,{x:-28.9,y:28.9,z:-24.1}],[54,{x:28.9,y:28.9,z:-24.1}],
+ [27,{x:0,y:-65.0,z:-16.0}],       // nasion (behind eye plane)
+ [33,{x:0,y:8.0,z:-21.0}],         // subnasale
+ [51,{x:0,y:36.0,z:-20.0}],        // upper lip center (cupid's bow)
+ [57,{x:0,y:46.0,z:-21.0}]];       // lower lip center
+
+/* Estimate roll / yaw / pitch from landmarks + canonical 3D model.
+   Roll is exact (inter-ocular chord); yaw & pitch come from a least-squares
+   perspective fit of the 3D model to the de-rolled landmarks (Gauss-Newton). */
+function estimatePose(lm){
+  const L=lm[36], R=lm[45];
+  const roll = angle2D(L,R);                       // measured screen tilt of eye line
+  const ec = mid(L,R), iod = dist(L,R);
+  if (iod < 10) return {roll,pitch:0,yaw:0,confidence:0.1};
+
+  // de-rotate points into level image space
+  const P = lm.map(p=>rot(p,ec,roll));
+  // normalized coords around eye center
+  const n = p=>({x:(p.x-ec.x)/iod, y:(p.y-ec.y)/iod});
+  const X=[], x=[], y=[];
+  for (const [idx,mm] of MODEL3D){ const q=n(P[idx]); X.push(mm); x.push(q.x); y.push(q.y); }
+
+  // Perspective fit: u=(r1·M)/w, v=(r2·M)/w, w=f−r3·M with f≈2.2 (typical portrait).
+  // Solve (yaw, pitch, tx, ty, scale) by damped Gauss-Newton with a finite-difference
+  // Jacobian; the damping factor is reduced on divergence so the fit always converges.
+  const f=2.2;
+  function project(par){
+    const [ya,pi,tx_,ty_,s_]=par;
+    const cy=Math.cos(ya*RAD),sy=Math.sin(ya*RAD),cp=Math.cos(pi*RAD),sp=Math.sin(pi*RAD);
+    // R = Rx(pi) * Ry(ya)
+    const RM=[[cy, 0, sy],
+              [sp*sy, cp, -sp*cy],
+              [-cp*sy, sp, cp*cy]];
+    const res=[];
+    for(let k=0;k<X.length;k++){
+      const M=X[k], mx=s_*M.x, my=s_*M.y, mz=s_*M.z;
+      const cx=RM[0][0]*mx+RM[0][1]*my+RM[0][2]*mz+tx_;
+      const cyy=RM[1][0]*mx+RM[1][1]*my+RM[1][2]*mz+ty_;
+      const cz=RM[2][0]*mx+RM[2][1]*my+RM[2][2]*mz;
+      const w=f-cz;
+      res.push(cx/w - x[k], cyy/w - y[k]);
+    }
+    return res;
+  }
+  const sq=v=>v.reduce((a,b)=>a+b*b,0);
+  let par=[0,0,0,0,1];
+  let rv=project(par), cost=sq(rv), damp=1;
+  for(let it=0;it<60;it++){
+    const e=[1e-4,1e-4,1e-4,1e-4,1e-4];
+    const cols=rv.length;
+    // finite-difference jacobian transposed (5 x cols)
+    const JT=Array.from({length:5},()=>new Array(cols).fill(0));
+    for(let p=0;p<5;p++){
+      const pp=par.slice(); pp[p]+=e[p];
+      const rp=project(pp);
+      for(let c=0;c<cols;c++) JT[p][c]=(rp[c]-rv[c])/e[p];
+    }
+    // normal equations (5x5) with Levenberg damping
+    const H=Array.from({length:5},(_,i)=>Array.from({length:5},(_,j)=>{
+      let t=0;for(let c=0;c<cols;c++)t+=JT[i][c]*JT[j][c];return t;}));
+    for(let i=0;i<5;i++)H[i][i]*=(1+damp*0.1)+1e-9;
+    const g=Array.from({length:5},(_,i)=>{let t=0;for(let c=0;c<cols;c++)t+=JT[i][c]*rv[c];return -t;});
+    const d=solve5(H,g);
+    if(!d){damp*=2;continue;}
+    const cand=par.map((v,p)=>v+clamp(d[p],-2,2)*(p===4?0.5:1));
+    if(cand[4]<0.3)cand[4]=0.3;
+    const rc=project(cand), cc=sq(rc);
+    if(cc<cost){par=cand;rv=rc;cost=cc;damp=Math.max(damp*0.7,0.02);}
+    else{damp*=4;if(damp>1e6)break;}
+    if(cost<1e-8||Math.max(...d.map(Math.abs))<1e-5) break;
+  }
+  const yawEst=par[0], pitchEst=par[1];
+  // confidence from reprojection error + symmetry + pose magnitude
+  const err=Math.sqrt(rv.reduce((a,b)=>a+b*b,0)/(rv.length||1));
+  const reprojScore=1-Math.min(1,err*8);
+  const mOff=Math.abs(n(mid(P[48],P[54])).x);
+  const symScore=1-Math.min(1,mOff*2);
+  const poseScore=1-Math.min(1,(Math.abs(yawEst)+Math.abs(pitchEst))/90);
+  const confidence=Math.max(0.1, reprojScore*0.3 + symScore*0.35 + poseScore*0.35);
+  return {roll, yaw:yawEst, pitch:pitchEst, confidence};
+}
+
+/* tiny 5x5 linear solver (Gaussian elimination w/ partial pivot) */
+function solve5(A,b){
+  const M=A.map((r,i)=>r.concat([b[i]])), n=5;
+  for(let c=0;c<n;c++){
+    let p=c;for(let r=c+1;r<n;r++)if(Math.abs(M[r][c])>Math.abs(M[p][c]))p=r;
+    if(Math.abs(M[p][c])<1e-12)return null;
+    [M[c],M[p]]=[M[p],M[c]];
+    for(let r=0;r<n;r++){if(r===c)continue;const f=M[r][c]/M[c][c];
+      for(let k=c;k<=n;k++)M[r][k]-=f*M[c][k];}
+  }
+  return M.map((r,i)=>r[n]/r[i]);
+}
+
+/* Rotate/scale landmarks into the canonical frontal frame (upright + centered) */
+function canonicalize(lm,pose){
+  const ec=mid(lm[36],lm[45]);
+  let c=lm.map(p=>rot(p,ec,pose.roll));                 // exact roll correction
+  const jawMid=mid(c[2],c[14]);                          // center on vertical midline
+  const dx=ec.x-jawMid.x;
+  c=c.map(p=>({x:p.x+dx,y:p.y}));
+  const yawF=Math.min(1.6,1/Math.max(0.5,Math.cos(pose.yaw*RAD)));   // yaw undistortion
+  c=c.map(p=>({x:ec.x+(p.x-ec.x)*yawF,y:p.y}));
+  const pitF=1/Math.max(0.6,Math.cos(pose.pitch*RAD));               // pitch undistortion
+  c=c.map(p=>({x:p.x,y:ec.y+(p.y-ec.y)*pitF}));
+  return c;
+}
+
+/* Bootstrap uncertainty: jitter landmarks, recompute metric */
+function gauss(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function bootstrap(lm,fn,sigma=2,N=80){
+  const vals=[];
+  for(let i=0;i<N;i++)vals.push(fn(lm.map(p=>({x:p.x+gauss()*sigma,y:p.y+gauss()*sigma}))));
+  vals.sort((a,b)=>a-b);
+  const mean=vals.reduce((a,b)=>a+b,0)/N;
+  const std=Math.sqrt(vals.reduce((s,v)=>s+(v-mean)**2,0)/N);
+  return {mean,std,ci:[vals[Math.floor(N*0.025)],vals[Math.floor(N*0.975)]]};
+}
+
+/* ============================================================
+   METRICS  (ported from src/utils/metrics.ts — with fixes:
+   inter-ocular uses inner corners 39↔42, philtrum uses subnasale 33↔upper-lip 51)
+   ============================================================ */
+function detectOcclusion(lm){
+  const o={leftEye:false,rightEye:false,nose:false,mouth:false,leftBrow:false,rightBrow:false,jaw:false,conf:1};
+  const ear=s=>{const off=s==='left'?0:6;return dist(lm[37+off],lm[40+off])/dist(lm[36+off],lm[39+off]);};
+  if(ear('left')<0.1){o.leftEye=true;o.conf*=0.7;}
+  if(ear('right')<0.1){o.rightEye=true;o.conf*=0.7;}
+  const lw=dist(lm[36],lm[39]),rw=dist(lm[42],lm[45]),r=lw/rw;
+  if(r<0.5)o.leftEye=true; if(r>2)o.rightEye=true;
+  if(r<0.5||r>2)o.conf*=0.8;
+  let curv=0;
+  for(let i=1;i<16;i++){const a1=Math.atan2(lm[i].y-lm[i-1].y,lm[i].x-lm[i-1].x);
+    const a2=Math.atan2(lm[i+1].y-lm[i].y,lm[i+1].x-lm[i].x);let d=a2-a1;
+    while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;curv+=Math.abs(d);}
+  if(curv/15>0.9){o.jaw=true;o.conf*=0.8;}
+  const nx=lm[30].x;
+  if(nx<Math.min(lm[36].x,lm[45].x)||nx>Math.max(lm[36].x,lm[45].x)){o.nose=true;o.conf*=0.6;}
+  const mer=dist(lm[48],lm[54])/dist(lm[36],lm[45]);
+  if(mer<0.4||mer>2.5){o.mouth=true;o.conf*=0.7;}
+  return o;
+}
+
+function computeAllMetrics(c,o){
+  const M=[];
+  const add=(name,cat,fn,unit,occ,idW,ageS,stl,notes)=>{
+    const u=bootstrap(c,fn);
+    M.push({name,category:cat,value:u.mean,unit,u,quality:occ?'occluded':undefined,isOccluded:!!occ,idW,ageS,stl,notes,lr:1});
+  };
+  add('Left Canthal Tilt','Eye Shape',p=>angle2D(p[39],p[36]),'°',o.leftEye,0.9,0.95,0.1,'Inner→outer eye angle (canonical frame). Highly identity-stable.');
+  add('Right Canthal Tilt','Eye Shape',p=>angle2D(p[42],p[45]),'°',o.rightEye,0.9,0.95,0.1,'Inner→outer eye angle (canonical frame). Highly identity-stable.');
+  add('Left Eye Aspect Ratio','Eye Shape',p=>dist(p[37],p[40])/dist(p[36],p[39]),'',o.leftEye,0.7,0.9,0.2,'Vertical/horizontal eye openness.');
+  add('Right Eye Aspect Ratio','Eye Shape',p=>dist(p[43],p[46])/dist(p[42],p[45]),'',o.rightEye,0.7,0.9,0.2,'Vertical/horizontal eye openness.');
+  add('Inter-ocular / Face Width','Face Proportions',p=>dist(p[39],p[42])/dist(p[2],p[14]),'',o.leftEye||o.rightEye||o.jaw,0.8,0.7,0.05,'Inner-eye spacing vs jaw width. Narrows slightly with age.');
+  add('Nose Width / Face Width','Nose',p=>dist(p[31],p[35])/dist(p[2],p[14]),'',o.nose,0.6,0.75,0.1,'Alar base width ratio. Grows slightly with age.');
+  add('Nose Length / Face Height','Nose',p=>dist(p[27],p[30])/dist(p[27],p[8]),'',o.nose,0.65,0.7,0.05,'Nasion→tip over nasion→chin.');
+  add('Mouth Width / Face Width','Mouth',p=>dist(p[48],p[54])/dist(p[2],p[14]),'',o.mouth,0.5,0.8,0.3,'Smile-independent width ratio (expression can still bias).');
+  add('Mouth Aspect Ratio (H/W)','Mouth',p=>dist(p[51],p[57])/dist(p[48],p[54]),'',o.mouth,0.35,0.6,0.5,'Openness — very expression-dependent, low weight.');
+  add('Face Height / Width','Face Shape',p=>dist(p[27],p[8])/dist(p[2],p[14]),'',o.jaw,0.5,0.5,0.1,'Elongation. Changes strongly child→adult.');
+  add('Jaw Angle','Jaw',p=>{const a1=Math.atan2(p[2].y-p[8].y,p[2].x-p[8].x);
+      const a2=Math.atan2(p[14].y-p[8].y,p[14].x-p[8].x);let a=(a2-a1)/RAD;if(a<0)a+=360;return a;},
+      '°',o.jaw,0.75,0.65,0.1,'Chin-corner included angle across gonion points.');
+  add('Cheek Width / Jaw Width','Cheeks',p=>dist(p[1],p[15])/dist(p[2],p[14]),'',o.jaw,0.5,0.6,0.15,'Reduces with age as baby fat diminishes.');
+  add('Left Eyebrow Angle','Eyebrows',p=>angle2D(p[17],p[21]),'°',o.leftBrow,0.4,0.7,0.6,'Styling-sensitive.');
+  add('Right Eyebrow Angle','Eyebrows',p=>angle2D(p[26],p[22]),'°',o.rightBrow,0.4,0.7,0.6,'Styling-sensitive.');
+  add('Philtrum / Face Height','Mid-face',p=>dist(p[33],p[51])/dist(p[27],p[8]),'',o.nose||o.mouth,0.6,0.8,0.1,'Subnasale→upper lip. Stable & identity-informative.');
+  add('Forehead / Face Height','Face Shape',p=>{const bc=mid(p[21],p[22]);return Math.abs(p[27].y-bc.y)/dist(p[27],p[8]);},'',false,0.4,0.5,0.2,'Brow-to-nasion proxy. Decreases with age.');
+
+  // quality thresholds + L/R consistency
+  const thr={'°':3,'':0.03};
+  for(const m of M){ if(!m.isOccluded) m.quality=(m.u.std<(thr[m.unit]??0.03)*1.7)?'good':'fair'; }
+  [['Left Canthal Tilt','Right Canthal Tilt'],['Left Eye Aspect Ratio','Right Eye Aspect Ratio'],
+   ['Left Eyebrow Angle','Right Eyebrow Angle']].forEach(([ln,rn])=>{
+    const l=M.find(x=>x.name===ln),r=M.find(x=>x.name===rn);
+    const d=Math.abs(l.value-r.value), cs=Math.hypot(l.u.std,r.u.std);
+    const cons=cs>0?clamp(1-d/(3*cs),0,1):1; l.lr=r.lr=cons;
+    if(cons<0.3&&!l.isOccluded&&!r.isOccluded){l.notes+=' ⚠ L/R mismatch';r.notes+=' ⚠ L/R mismatch';
+      if(l.quality==='good')l.quality='fair';if(r.quality==='good')r.quality='fair';}
+  });
+  return M;
+}
+
+/* ============================================================
+   AGE ESTIMATION + CALIBRATED SIMILARITY  (analysis.ts port)
+   ============================================================ */
+function estimateAge(M){
+  const find=n=>M.find(m=>m.name===n&&!m.isOccluded);
+  let sc=0,w=0;
+  const push=(v,ww)=>{sc+=clamp(v,3,80)*ww;w+=ww;};
+  let m;
+  if(m=find('Face Height / Width'))push(5+(m.value-1.1)/0.3*15,0.3);
+  if(m=find('Nose Length / Face Height'))push(5+(m.value-0.25)/0.1*20,0.2);
+  if(m=find('Inter-ocular / Face Width'))push(5+(0.45-m.value)/0.1*15,0.2);
+  if(m=find('Cheek Width / Jaw Width'))push(5+(1.1-m.value)/0.15*20,0.15);
+  if(m=find('Forehead / Face Height'))push(5+(0.35-m.value)/0.1*15,0.15);
+  const age=w>0?sc/w:25, conf=w>0.5?Math.min(0.8,w):0.3;
+  return {age:Math.round(age),ci:[Math.max(1,Math.round(age-8*(1-conf))),Math.round(age+8*(1-conf))],conf};
+}
+const PRIORS={'Face Height / Width':0.008,'Nose Width / Face Width':0.003,'Nose Length / Face Height':0.005,
+ 'Inter-ocular / Face Width':-0.005,'Cheek Width / Jaw Width':-0.006,'Forehead / Face Height':-0.004,
+ 'Left Canthal Tilt':0,'Right Canthal Tilt':0,'Left Eye Aspect Ratio':0,'Right Eye Aspect Ratio':0,
+ 'Jaw Angle':0.3,'Philtrum / Face Height':0.002};
+function priorDelta(name,dAge){const k=PRIORS[name];return k===undefined?{e:0,tol:0.1}:{e:k*dAge,tol:Math.abs(k)*dAge+0.02};}
+
+function calibratedScore(M1,M2,a1,a2,ageNorm){
+  const dAge=Math.abs(a1.age-a2.age);
+  let LLR=0,W=0;const sup=[],opp=[];const rows=[];
+  for(const m1 of M1){
+    const m2=M2.find(m=>m.name===m1.name); if(!m2)continue;
+    if(m1.isOccluded||m2.isOccluded||m1.quality==='poor'||m2.quality==='poor'){
+      rows.push({m:m1,a:m1.value,b:m2.value,skip:true}); continue;}
+    const obs=Math.abs(m1.value-m2.value);
+    const {e,tol}=ageNorm?priorDelta(m1.name,dAge):{e:0,tol:Math.max(m1.u.std,m2.u.std)*2};
+    const resid=Math.abs(obs-Math.abs(e));
+    const effTol=Math.max(tol,m1.u.std+m2.u.std,0.01);
+    const nr=resid/effTol;
+    const llr=nr<1?(1-nr)*0.5:-(nr-1)*0.8;
+    const qf=m1.quality==='good'?1:0.7;
+    const wt=m1.idW*m1.ageS*qf*(1-m1.stl*0.5);
+    LLR+=llr*wt;W+=wt;
+    const contrib=llr*wt;
+    (contrib>0?sup:opp).push({name:m1.name,c:Math.abs(contrib)});
+    rows.push({m:m1,a:m1.value,b:m2.value,delta:obs,tol:effTol,resid:nr,skip:false});
+  }
+  const avg=W>0?LLR/W:0, LR=Math.exp(avg);
+  const score=100/(1+Math.exp(-avg*2));
+  const sd=W>0?15/Math.sqrt(W):20;
+  sup.sort((a,b)=>b.c-a.c); opp.sort((a,b)=>b.c-a.c);
+  let verdict = score>=75?'Strong evidence of similarity'
+    : score>=60?'Moderate evidence of similarity'
+    : score>=45?'Inconclusive — consistent with both same & different persons'
+    : score>=30?'Moderate evidence of difference':'Strong evidence of difference';
+  return {score:Math.round(score),ci:[Math.round(clamp(score-1.96*sd,0,100)),Math.round(clamp(score+1.96*sd,0,100))],
+    LR,verdict,sup:sup.slice(0,6),opp:opp.slice(0,6),rows,
+    note:`${W.toFixed(1)} weighted metric comparisons · est. ages ${a1.age} vs ${a2.age} (Δ${dAge}y) · `+
+      `${ageNorm?'age-normalized':'raw'} · likelihood ratio ${LR.toFixed(2)} · heuristic, not forensic ID.`};
+}
+/* ============================================================
+   CANVAS DRAWING  (ported from src/utils/drawing.ts)
+   Overlays are drawn in the canonical (upright, centered) frame.
+   ============================================================ */
+const C={lm:'#00ff88',lmDim:'#00ff8844',pose:'#ffd93d',eye:'#ff6b6b',nose:'#6bcfff',
+  mouth:'#ff9ff3',jaw:'#a29bfe',occF:'#ff000055',occB:'#ff0000',meas:'#dfe6e9',
+  good:'#4ade80',fair:'#fbbf24',poor:'#f87171',occG:'#6b7280',txt:'#ffffff'};
+
+function line(ctx,a,b){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+function poly(ctx,pts,close){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));if(close)ctx.closePath();ctx.stroke();}
+function dotAt(ctx,p,r,col){ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,r,0,7);ctx.fill();}
+function arcAngle(ctx,c,a1,a2,r,col){ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.beginPath();
+  ctx.arc(c.x,c.y,r,a1*RAD,a2*RAD,a2<a1);ctx.stroke();}
+
+function drawOverlay(ctx,res,opts){
+  const {landmarks:raw,canonical:c,pose:o}=res;
+  if(opts.occlusion) drawOcclusion(ctx,raw,o);
+  if(opts.landmarks){
+    raw.forEach(p=>dotAt(ctx,p,1.5,C.lmDim));
+    c.forEach(p=>dotAt(ctx,p,2.5,C.lm));
+  }
+  if(opts.poseAxes) drawPoseAxes(ctx,raw,poseOf(res));
+  if(opts.eyeAngles) drawEyes(ctx,c);
+  if(opts.noseLines) drawNose(ctx,c);
+  if(opts.mouthLines) drawMouth(ctx,c);
+  if(opts.jawLine) drawJaw(ctx,c);
+  if(opts.measurements) drawMeasurements(ctx,c);
+  if(opts.quality) drawQuality(ctx,c,o);
+}
+function poseOf(res){return res.pose;}
+
+function drawOcclusion(ctx,lm,o){
+  const regions=[o.leftEye&&[36,41],o.rightEye&&[42,47],o.nose&&[27,35],
+                 o.mouth&&[48,67],o.jaw&&[0,16]];
+  ctx.font='bold 10px monospace';
+  for(const r of regions){ if(!r)continue;
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(let i=r[0];i<=r[1];i++){x0=Math.min(x0,lm[i].x);y0=Math.min(y0,lm[i].y);
+      x1=Math.max(x1,lm[i].x);y1=Math.max(y1,lm[i].y);}
+    ctx.fillStyle=C.occF;ctx.fillRect(x0-3,y0-3,x1-x0+6,y1-y0+6);
+    ctx.strokeStyle=C.occB;ctx.lineWidth=1;ctx.strokeRect(x0-3,y0-3,x1-x0+6,y1-y0+6);
+    ctx.fillStyle=C.occB;ctx.fillText('occluded?',x0-3,y0-6);
+  }
+}
+
+function drawPoseAxes(ctx,lm,pose){
+  const ec=mid(lm[36],lm[45]);
+  const len=Math.max(60,dist(lm[36],lm[45])*0.7);
+  const rr=pose.roll*RAD;
+  // measured tilt axis (what we correct away)
+  ctx.strokeStyle='#ffffff55';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+  line(ctx,{x:ec.x-len*Math.cos(rr),y:ec.y-len*Math.sin(rr)},{x:ec.x+len*Math.cos(rr),y:ec.y+len*Math.sin(rr)});
+  // level reference axis
+  ctx.strokeStyle=C.pose;ctx.lineWidth=2;ctx.setLineDash([]);
+  line(ctx,{x:ec.x-len,y:ec.y},{x:ec.x+len,y:ec.y});
+  // roll arc
+  ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(ec.x,ec.y,40,0,rr,rr<0);ctx.stroke();
+  // vertical midline
+  ctx.strokeStyle=C.pose+'88';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+  line(ctx,{x:ec.x,y:ec.y-60},{x:ec.x,y:ec.y+60});ctx.setLineDash([]);
+  ctx.fillStyle=C.pose;ctx.font='bold 11px monospace';
+  ctx.fillText(`Roll: ${pose.roll.toFixed(1)}°`,ec.x+45,ec.y-20);
+  ctx.fillText(`Yaw: ${pose.yaw.toFixed(1)}°`,ec.x+45,ec.y-6);
+  ctx.fillText(`Pitch: ${pose.pitch.toFixed(1)}°`,ec.x+45,ec.y+8);
+  const cc=pose.confidence>0.7?C.good:pose.confidence>0.4?C.fair:C.poor;
+  ctx.fillStyle=cc;ctx.fillText(`Pose conf: ${(pose.confidence*100).toFixed(0)}%`,ec.x+45,ec.y+22);
+}
+
+function drawEyes(ctx,l){
+  ctx.lineWidth=2;
+  // left eye outline + canthal chord with tilt label
+  ctx.strokeStyle=C.eye;
+  poly(ctx,[l[36],l[37],l[38],l[39],l[40],l[41]],true);
+  poly(ctx,[l[42],l[43],l[44],l[45],l[46],l[47]],true);
+  ctx.setLineDash([5,3]);
+  line(ctx,l[39],l[36]); line(ctx,l[42],l[45]);
+  ctx.setLineDash([]);
+  const tL=angle2D(l[39],l[36]), tR=angle2D(l[42],l[45]);
+  arcAngle(ctx,l[39],0,tL*RAD,16,C.eye);
+  arcAngle(ctx,l[42],Math.PI,tR*RAD+Math.PI,16,C.eye);
+  ctx.fillStyle=C.eye;ctx.font='bold 10px monospace';
+  ctx.fillText(`${tL.toFixed(1)}°`,l[36].x-34,l[36].y-6);
+  ctx.fillText(`${tR.toFixed(1)}°`,l[45].x+6,l[45].y-6);
+  // vertical openness markers
+  ctx.strokeStyle=C.eye+'aa';ctx.lineWidth=1;
+  line(ctx,l[37],l[40]); line(ctx,l[43],l[46]);
+}
+
+function drawNose(ctx,l){
+  ctx.strokeStyle=C.nose;ctx.lineWidth=1.5;
+  line(ctx,l[27],l[30]);                       // nose bridge length
+  line(ctx,l[31],l[35]);                       // alar width
+  ctx.setLineDash([4,3]);
+  line(ctx,l[27],{x:l[27].x,y:l[8].y});        // vertical face-height reference
+  ctx.setLineDash([]);
+  ctx.fillStyle=C.nose;ctx.font='bold 10px monospace';
+  const nl=dist(l[27],l[30]),fh=dist(l[27],l[8]);
+  ctx.fillText(`nose ${(nl/(fh||1)*100).toFixed(0)}% of H`,l[30].x+8,l[30].y+4);
+}
+
+function drawMouth(ctx,l){
+  ctx.strokeStyle=C.mouth;ctx.lineWidth=1.5;
+  poly(ctx,[l[48],l[49],l[50],l[51],l[52],l[53],l[54],l[55],l[56],l[57],l[58],l[59],l[48]],true);
+  line(ctx,l[48],l[54]);                       // width
+  ctx.setLineDash([4,3]); line(ctx,l[51],l[57]); ctx.setLineDash([]); // openness
+  const mw=dist(l[48],l[54]),fw=dist(l[2],l[14]);
+  ctx.fillStyle=C.mouth;ctx.font='bold 10px monospace';
+  ctx.fillText(`mouth ${(mw/(fw||1)*100).toFixed(0)}% of W`,l[54].x+6,l[54].y+12);
+}
+
+function drawJaw(ctx,l){
+  ctx.strokeStyle=C.jaw;ctx.lineWidth=2;
+  const pts=[];for(let i=0;i<=16;i++)pts.push(l[i]);
+  poly(ctx,pts,false);
+  // jaw angle at chin between gonion corners
+  arcAngle(ctx,l[8],angle2D(l[8],l[2])*RAD,angle2D(l[8],l[14])*RAD,26,C.jaw);
+  const a1=Math.atan2(l[2].y-l[8].y,l[2].x-l[8].x),a2=Math.atan2(l[14].y-l[8].y,l[14].x-l[8].x);
+  let ang=(a2-a1)/RAD;if(ang<0)ang+=360;
+  ctx.fillStyle=C.jaw;ctx.font='bold 11px monospace';
+  ctx.fillText(`jaw ${ang.toFixed(0)}°`,l[8].x-18,l[8].y+22);
+}
+
+function drawMeasurements(ctx,l){
+  ctx.strokeStyle=C.meas;ctx.lineWidth=1;ctx.setLineDash([2,3]);
+  line(ctx,l[2],l[14]);   // face width
+  line(ctx,mid(l[39],l[42]),l[8]); // midline
+  ctx.setLineDash([]);
+  ctx.fillStyle=C.meas;ctx.font='10px monospace';
+  ctx.fillText('face width',l[2].x+4,Math.min(l[2].y,l[14].y)-6);
+}
+
+function drawQuality(ctx,l,o){
+  const col=o.conf>0.75?C.good:o.conf>0.5?C.fair:C.poor;
+  dotAt(ctx,l[8],4,col);
+  ctx.fillStyle=col;ctx.font='bold 10px monospace';
+  ctx.fillText(`landmark plausibility ${(o.conf*100).toFixed(0)}%`,l[8].x+8,l[8].y-8);
+}
+
+/* Upright (tilt-corrected) rendering of the whole image: rotate canvas by -roll.
+   Canonical landmarks are already upright-frame coords, so they align with the
+   rotated bitmap when drawn at scaled positions on top. */
+let lastCanonical=null;
+
+/* Silhouette overlay: normalize each face to eye-midpoint + IOD scale */
+function normalizedShape(res,targetIOD,cx,cy){
+  const l=res.canonical;
+  const ec=mid(l[36],l[45]);const iod=dist(l[36],l[45])||1;
+  const s=targetIOD/iod;
+  return l.map(p=>({x:cx+(p.x-ec.x)*s, y:cy+(p.y-ec.y)*s}));
+}
+function drawSilhouette(ctx,l,color,fill){
+  ctx.strokeStyle=color;ctx.lineWidth=2;
+  const pts=[];for(let i=0;i<=17;i++)pts.push(l[i]);
+  poly(ctx,pts,true);
+  if(fill){ctx.save();ctx.globalAlpha=0.12;ctx.fillStyle=color;
+    ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.fill();ctx.restore();}
+  poly(ctx,[l[36],l[37],l[38],l[39],l[40],l[41]],true);
+  poly(ctx,[l[42],l[43],l[44],l[45],l[46],l[47]],true);
+  ctx.strokeStyle=C.pose;ctx.lineWidth=1;ctx.setLineDash([4,3]);
+  line(ctx,l[39],l[42]); ctx.setLineDash([]);
+}
+
+/* ============================================================
+   APP STATE / UI
+   ============================================================ */
+const $=id=>document.getElementById(id);
+const state={A:null,B:null};   // A/B -> {img, res}
+let modelsReady=false;
+let uprightMode={A:false,B:false};
+
+const OPTS=[['landmarks','Landmarks',true],['poseAxes','Pose axes & tilt',true],
+ ['eyeAngles','Eye angles',true],['noseLines','Nose lines',true],['mouthLines','Mouth lines',true],
+ ['jawLine','Jaw line',true],['occlusion','Occlusion flags',true],
+ ['measurements','Measurements',true],['quality','Quality badges',true]];
+const opts={};
+(function buildToggles(){
+  const box=$('toggles');
+  for(const [key,label,def] of OPTS){
+    opts[key]=def;
+    const lb=document.createElement('label');
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=def;
+    cb.onchange=()=>{opts[key]=cb.checked;redrawAll();};
+    lb.append(cb,document.createTextNode(label));box.append(lb);
+  }
+})();
+
+/* ---- model loading ---- */
+(async function loadModels(){
+  const MODEL_URLS=[
+    'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights/',
+    'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights/',
+    'https://justadudewhohacks.github.io/face-api.js/models/'];
+  for(const url of MODEL_URLS){
+    try{
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(url),
+        faceapi.nets.faceLandmark68Net.loadFromUri(url)]);
+      modelsReady=true;
+      $('modelDot').className='dot ok';
+      $('statusMsg').textContent='Models ready — upload photos to begin.';
+      refreshSel();
+      return;
+    }catch(e){ /* try next mirror */ }
+  }
+  $('modelDot').className='dot err';
+  $('statusMsg').textContent='Could not download face models — check your connection and reload.';
+})();
+
+/* ---- per-slot image management ---- */
+function makeSlot(side){
+  const drop=$('drop'+side), file=$('file'+side), thumbs=$('thumbs'+side), errEl=$('err'+side);
+  const images=[]; let sel=-1;
+  const addFiles=list=>{
+    for(const f of list){ if(!f.type.startsWith('image/'))continue;
+      const rd=new FileReader();
+      rd.onload=()=>{images.push(rd.result);sel=images.length-1;renderThumbs();runAnalysis(side);};
+      rd.readAsDataURL(f);}
+  };
+  drop.onclick=()=>file.click();
+  drop.ondragover=e=>{e.preventDefault();drop.classList.add('over');};
+  drop.ondragleave=()=>drop.classList.remove('over');
+  drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');addFiles(e.dataTransfer.files);};
+  file.onchange=()=>{addFiles(file.files);file.value='';};
+  function renderThumbs(){
+    thumbs.innerHTML='';
+    images.forEach((src,i)=>{
+      const d=document.createElement('div');d.className='thumb'+(i===sel?' sel':'');
+      const im=document.createElement('img');im.src=src;d.append(im);
+      const x=document.createElement('span');x.className='x';x.textContent='×';
+      x.onclick=ev=>{ev.stopPropagation();images.splice(i,1);sel=Math.min(sel,images.length-1);
+        renderThumbs();runAnalysis(side);};
+      d.append(x);
+      d.onclick=()=>{sel=i;renderThumbs();runAnalysis(side);};
+      thumbs.append(d);
+    });
+  }
+  return {get selected(){return sel>=0?images[sel]:null;}, errEl};
+}
+const slotA=makeSlot('A'), slotB=makeSlot('B');
+
+async function runAnalysis(side){
+  const slot=side==='A'?slotA:slotB;
+  slot.errEl.textContent='';
+  const src=slot.selected;
+  if(!modelsReady||!src){return;}
+  $('statusMsg').textContent='Analyzing photo '+side+'…';
+  try{
+    const img=await loadImg(src);
+    const cv=document.createElement('canvas');
+    const maxDim=1100;
+    const sc=Math.min(1,maxDim/Math.max(img.width,img.height));
+    cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+    const cx=cv.getContext('2d');cx.drawImage(img,0,0,cv.width,cv.height);
+    const det=await faceapi.detectSingleFace(cv,new faceapi.TinyFaceDetectorOptions({inputSize:512,scoreThreshold:0.3}))
+                          .withFaceLandmarks();
+    if(!det){slot.errEl.textContent='No face detected — try a clearer, front-facing photo.';
+      $('statusMsg').textContent='Models ready.';return;}
+    const raw=det.landmarks.positions.map(p=>({x:p.x,y:p.y}));
+    const occ=detectOcclusion(raw);
+    const pose=estimatePose(raw);
+    const canon=canonicalize(raw,pose);
+    lastCanonical={lm:canon,ec:mid(canon[36],canon[45])};
+    const metrics=computeAllMetrics(canon,occ);
+    const age=estimateAge(metrics);
+    const good=metrics.filter(m=>m.quality==='good'&&!m.isOccluded).length;
+    const tot=metrics.filter(m=>!m.isOccluded).length;
+    const quality=good/tot>0.7?'good':good/tot>0.4?'fair':'poor';
+    state[side]={img,res:{imageUrl:src,landmarks:raw,canonical:canon,pose,occlusion:occ,metrics,age,quality}};
+    $('upright'+side).disabled=false;$('dl'+side).disabled=false;
+    redrawAll();renderTable(side);refreshSel();
+    $('statusMsg').textContent='Done — '+side+': '+quality+' quality, est. age ~'+age.age+'.';
+  }catch(e){
+    slot.errEl.textContent='Analysis failed: '+(e.message||e);
+    $('statusMsg').textContent='Models ready.';
+  }
+}
+function loadImg(src){return new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src=src;});}
+
+/* ---- main view canvases ---- */
+function paintView(side){
+  const cv=$('view'+side),st=state[side];
+  if(!st){cv.style.display='none';return;}
+  cv.style.display='block';
+  const maxW=cv.parentElement.clientWidth-28;
+  const sc=Math.min(maxW/st.img.width,1);
+  cv.width=Math.round(st.img.width*sc);cv.height=Math.round(st.img.height*sc);
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(uprightMode[side]){
+    drawUprightWith(ctx,st,sc);
+  }else{
+    ctx.drawImage(st.img,0,0,cv.width,cv.height);
+    const tx=p=>({x:p.x*sc,y:p.y*sc});
+    const scaled={...st.res,landmarks:st.res.landmarks.map(tx),canonical:st.res.canonical.map(tx)};
+    lastCanonical={lm:scaled.canonical,ec:mid(scaled.canonical[36],scaled.canonical[45])};
+    drawOverlay(ctx,scaled,opts);
+  }
+}
+function drawUprightWith(ctx,st,sc){
+  const {img,pose}=st;const W=ctx.canvas.width,H=ctx.canvas.height;
+  const ec=mid(st.res.canonical[36],st.res.canonical[45]);
+  ctx.save();ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  ctx.translate(W/2,H/2);ctx.rotate(-pose.roll*RAD);ctx.scale(1.12,1.12);ctx.translate(-W/2,-H/2);
+  ctx.drawImage(img,0,0,W,H);ctx.restore();
+  // canonical landmarks (already upright) — shift so face stays visible after rotation
+  const off={x:(W/2-ec.x*sc)+(ec.x*sc-W/2),y:0}; // keep landmarks at their scaled positions
+  st.res.canonical.forEach(p=>dotAt(ctx,{x:p.x*sc+off.x,y:p.y*sc+off.y},2.5,C.lm));
+  ctx.fillStyle=C.pose;ctx.font='bold 12px monospace';
+  ctx.fillText(`upright — roll corrected by ${pose.roll.toFixed(1)}°`,12,20);
+}
+
+/* ---- side-by-side + silhouette canvases ---- */
+function paintExtras(){
+  const both=[state.A,state.B];
+  const have=both.filter(Boolean);
+  // side-by-side
+  const sxs=$('sxs');
+  if(have.length){
+    sxs.style.display='block';$('sxsHint').textContent='';
+    const cellW=Math.floor((sxs.parentElement.clientWidth-28)/2)-8;
+    const ch=340;sxs.width=cellW*2+16;sxs.height=ch;
+    const ctx=sxs.getContext('2d');ctx.fillStyle='#0b1220';ctx.fillRect(0,0,sxs.width,sxs.height);
+    have.forEach((st,k)=>{
+      const gk=k===0?'A':'B';
+      const sc=Math.min(cellW/st.img.width,ch/st.img.height,1);
+      const w=st.img.width*sc,h=st.img.height*sc;
+      const ox=k*(cellW+16)+ (cellW-w)/2, oy=(ch-h)/2;
+      ctx.save();ctx.translate(ox,oy);ctx.beginPath();ctx.rect(0,0,w,h);ctx.clip();
+      ctx.drawImage(st.img,0,0,w,h);
+      const tx=p=>({x:p.x*sc,y:p.y*sc});
+      drawOverlay(ctx,{...st.res,landmarks:st.res.landmarks.map(tx),canonical:st.res.canonical.map(tx)},opts);
+      ctx.restore();
+      ctx.fillStyle=C.txt;ctx.font='bold 13px sans-serif';
+      ctx.fillText(gk+' · roll '+st.res.pose.roll.toFixed(1)+'°',k*(cellW+16)+8,18);
+    });
+    if(have.length===1){ctx.fillStyle='#8ea0bd';ctx.font='13px sans-serif';
+      ctx.fillText('load the other side for comparison',cellW+24,ch/2);}
+  }else{sxs.style.display='none';$('sxsHint').textContent='Load at least one photo to see the pose-normalized overlay.';}
+  // silhouette overlay
+  const ovl=$('ovl');const ow=560,oh=560;ovl.width=ow;ovl.height=oh;
+  const ctx=ovl.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,ow,oh);
+  if(state.A&&state.B){
+    const T=170;
+    const la=normalizedShape(state.A.res,T,ow/2,oh/2);
+    const lb=normalizedShape(state.B.res,T,ow/2,oh/2);
+    const alpha=+$('ovlAlpha').value/100;
+    ctx.save();ctx.globalAlpha=alpha;drawSilhouette(ctx,la,'#38bdf8',true);ctx.restore();
+    ctx.save();ctx.globalAlpha=1-alpha;drawSilhouette(ctx,lb,'#f472b6',true);ctx.restore();
+    ctx.fillStyle='#8ea0bd';ctx.font='11px monospace';
+    ctx.fillText('IOD-normalized alignment · yellow = inner-eye baseline',12,oh-12);
+  }else{
+    ctx.fillStyle='#8ea0bd';ctx.font='13px sans-serif';ctx.textAlign='center';
+    ctx.fillText('Load photos into both A and B to overlay silhouettes',ow/2,oh/2);ctx.textAlign='left';
+  }
+}
+$('ovlAlpha').addEventListener('input',paintExtras);
+
+function redrawAll(){paintView('A');paintView('B');paintExtras();}
+['uprightA','uprightB'].forEach(id=>{
+  $(id).onclick=()=>{const side=id.endsWith('A')?'A':'B';
+    uprightMode[side]=!uprightMode[side];
+    $(id).textContent=uprightMode[side]?'⤵ Show original (with overlays)':'⤴ Show upright (tilt-corrected)';
+    paintView(side);};
+});
+['dlA','dlB'].forEach(id=>{$(id).onclick=()=>{const side=id.slice(-1);
+  const a=document.createElement('a');a.download='face-'+side.toLowerCase()+'.png';
+  a.href=$(('view'+side)).toDataURL();a.click();};});
+
+/* ---- metric tables ---- */
+function fmt(v,unit){const dec=unit==='°'?1:3;return v.toFixed(dec)+(unit||'');}
+function renderTable(side){
+  const st=state[side];const tb=$('tbl'+side).querySelector('tbody');tb.innerHTML='';
+  if(!st){$('hint'+side).textContent='';return;}
+  const cats={};
+  for(const m of st.res.metrics){(cats[m.category]=cats[m.category]||[]).push(m);}
+  for(const cat in cats){
+    const tr=document.createElement('tr');tr.className='cat';
+    tr.innerHTML=`<td colspan="4">${cat}</td>`;tb.append(tr);
+    for(const m of cats[cat]){
+      const tr2=document.createElement('tr');
+      const q=m.isOccluded?'occluded':m.quality;
+      const ci=m.u?`±${(((m.u.ci[1]-m.u.ci[0])/2)).toFixed(m.unit==='°'?1:3)}${m.unit}`:'';
+      tr2.innerHTML=`<td title="${m.notes}">${m.name}</td>
+        <td class="num">${m.isOccluded?'—':fmt(m.value,m.unit)+' <span style="color:#8ea0bd">'+ci+'</span>'}</td>
+        <td class="q-${q}">${q}</td><td class="num">${(m.idW*100).toFixed(0)}%</td>`;
+      tb.append(tr2);
+    }
+  }
+  const p=st.res.pose;
+  $('hint'+side).innerHTML=`Estimated age ~${st.res.age.age} y (${st.res.age.ci[0]}–${st.res.age.ci[1]}) · `+
+    `pose: roll ${p.roll.toFixed(1)}°, yaw ${p.yaw.toFixed(1)}°, pitch ${p.pitch.toFixed(1)}° · `+
+    `ID = identity-informativeness weight`;
+}
+
+/* ---- compare ---- */
+function refreshSel(){
+  $('btnCompare').disabled=!(modelsReady&&state.A&&state.B);
+}
+$('btnCompare').onclick=()=>{
+  if(!(state.A&&state.B))return;
+  const r=calibratedScore(state.A.res.metrics,state.B.res.metrics,
+    state.A.res.age,state.B.res.age,$('ageNorm').checked);
+  $('cmpArea').style.display='block';
+  const sv=$('scoreV');sv.textContent=r.score;
+  sv.style.color=r.score>=60?'var(--good)':r.score>=45?'var(--fair)':'var(--poor)';
+  const bar=$('scoreBar');bar.style.width=r.score+'%';
+  bar.style.background=r.score>=60?'var(--good)':r.score>=45?'var(--fair)':'var(--poor)';
+  $('verdict').textContent=r.verdict+`  (95% CI ${r.ci[0]}–${r.ci[1]})`;
+  $('scoreNote').textContent=r.note;
+  // mini canonical canvases
+  [['cmpA',state.A],['cmpB',state.B]].forEach(([id,st])=>{
+    const cv=$(id);const W=420;
+    const sc=W/st.img.width;cv.width=W;cv.height=Math.round(st.img.height*sc);
+    const ctx=cv.getContext('2d');ctx.drawImage(st.img,0,0,cv.width,cv.height);
+    const tx=p=>({x:p.x*sc,y:p.y*sc});
+    drawOverlay(ctx,{...st.res,landmarks:st.res.landmarks.map(tx),canonical:st.res.canonical.map(tx)},opts);
+  });
+  // rows table
+  const tb=$('tblCmp').querySelector('tbody');tb.innerHTML='';
+  for(const row of r.rows){
+    const tr=document.createElement('tr');
+    const u=row.m.unit;
+    let vd='—';
+    if(row.skip)vd=row.m.isOccluded?'skipped (occluded)':'skipped (poor)';
+    else vd=row.resid<1?'within tolerance':row.resid<3?'mismatch':'strong mismatch';
+    tr.innerHTML=`<td>${row.m.name}</td>
+      <td class="num">${fmt(row.a,u)}</td><td class="num">${fmt(row.b,u)}</td>
+      <td class="num">${row.skip?'—':fmt(row.delta,u)}</td>
+      <td class="num">${row.skip?'—':fmt(row.tol,u)}</td>
+      <td>${vd}</td>`;
+    tb.append(tr);
+  }
+  const mk=(list,el,pos)=>{el.innerHTML='';const mx=Math.max(...list.map(o=>o.c),0.001);
+    for(const o of list){const d=document.createElement('div');d.className='crow';
+      d.innerHTML=`<span class="nm">${o.name}</span><span class="bar ${pos?'pos':'neg'}" style="width:${(o.c/mx*120).toFixed(0)}px"></span>`;
+      el.append(d);}
+    if(!list.length)el.innerHTML='<div class="crow"><span class="nm">none</span></div>';};
+  mk(r.sup,$('supList'),true);mk(r.opp,$('oppList'),false);
+  $('cmpArea').scrollIntoView({behavior:'smooth',block:'start'});
+};
+
+window.addEventListener('resize',()=>{clearTimeout(window.__rz);window.__rz=setTimeout(redrawAll,150);});
+})();
+</script>
+</body>
+</html>
