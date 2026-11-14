@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import * as faceapi from 'face-api.js';
 import FaceCanvas, { ImageAnalysisResult } from './components/FaceCanvas';
 import AnalysisResults from './components/AnalysisResults';
+import EyeMatchPanel from './components/EyeMatchPanel';
 import { DrawOptions } from './utils/drawing';
 
 const MODEL_URLS = [
@@ -41,6 +42,7 @@ function App() {
   // Analysis options
   const [ageNormalized, setAgeNormalized] = useState(false);
   const [showUncertainty, setShowUncertainty] = useState(true);
+  const [excludeBrows, setExcludeBrows] = useState(false);
 
   // Load models
   useEffect(() => {
@@ -315,6 +317,16 @@ function App() {
                     <span className="text-xs text-gray-500">Display 95% CI on all values</span>
                   </div>
                 </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div className={`w-10 h-5 rounded-full transition-colors ${excludeBrows ? 'bg-indigo-600' : 'bg-gray-600'} relative`}>
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform ${excludeBrows ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                  </div>
+                  <input type="checkbox" checked={excludeBrows} onChange={() => setExcludeBrows(!excludeBrows)} className="sr-only" />
+                  <div>
+                    <span className="text-xs text-gray-300 block">Eyes-only: ignore eyebrows</span>
+                    <span className="text-xs text-gray-500">Drop brow features (grooming/makeup vary)</span>
+                  </div>
+                </label>
               </div>
             </div>
 
@@ -339,12 +351,19 @@ function App() {
 
         {/* Results */}
         {results1.length > 0 && results2.length > 0 && (
-          <AnalysisResults
-            results1={results1}
-            results2={results2}
-            ageNormalized={ageNormalized}
-            showUncertainty={showUncertainty}
-          />
+          <div className="space-y-6">
+            <EyeMatchPanel
+              results1={results1}
+              results2={results2}
+              excludeBrows={excludeBrows}
+            />
+            <AnalysisResults
+              results1={results1}
+              results2={results2}
+              ageNormalized={ageNormalized}
+              showUncertainty={showUncertainty}
+            />
+          </div>
         )}
 
         {/* Instructions when no results */}
