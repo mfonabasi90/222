@@ -6,6 +6,7 @@ import {
 } from '../utils/geometry';
 import { computeAllMetrics, detectOcclusion, MetricResult, OcclusionMap } from '../utils/metrics';
 import { estimateAge, AgeEstimate } from '../utils/analysis';
+import { buildEyeFingerprint, EyeFingerprint } from '../utils/eyeAnalysis';
 import { drawFaceAnalysis, DrawOptions } from '../utils/drawing';
 
 export interface ImageAnalysisResult {
@@ -18,6 +19,7 @@ export interface ImageAnalysisResult {
   ageEstimate: AgeEstimate;
   lensInfo: LensInfo;
   quality: 'good' | 'fair' | 'poor';
+  eyeFingerprint: EyeFingerprint;
 }
 
 interface FaceCanvasProps {
@@ -131,6 +133,12 @@ export default function FaceCanvas({
         // Estimate age
         const ageEstimate = estimateAge(metrics);
 
+        // Eye-region biometric fingerprint (canthal tilt + periocular features)
+        const eyeFingerprint = buildEyeFingerprint(
+          canonicalLandmarks,
+          occlusion.leftEye || occlusion.rightEye
+        );
+
         // Determine quality
         const goodMetrics = metrics.filter(m => m.quality === 'good' && !m.isOccluded).length;
         const totalMetrics = metrics.filter(m => !m.isOccluded).length;
@@ -146,6 +154,7 @@ export default function FaceCanvas({
           ageEstimate,
           lensInfo,
           quality,
+          eyeFingerprint,
         };
 
         setAnalysisResult(analysisResult);
@@ -244,6 +253,24 @@ export default function FaceCanvas({
             {analysisResult.lensInfo.distortionWarning && (
               <span className="text-yellow-400">⚠️ Wide-angle lens</span>
             )}
+          </div>
+          {/* Canthal tilt readout */}
+          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-700/50">
+            {([analysisResult.eyeFingerprint.left, analysisResult.eyeFingerprint.right] as const).map(eye => (
+              <div key={eye.side} className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wide text-gray-500">{eye.side} canthal tilt</span>
+                  <span className={`text-xs font-bold ${
+                    eye.classification.startsWith('Positive') ? 'text-emerald-400' :
+                    eye.classification.startsWith('Negative') ? 'text-orange-400' : 'text-sky-400'
+                  }`}>
+                    {eye.canthalTiltDeg >= 0 ? '+' : ''}{eye.canthalTiltDeg.toFixed(1)}°
+                  </span>
+                </div>
+                <div className="text-[10px] text-gray-400 leading-tight">{eye.classification}</div>
+                <div className="text-[10px] text-gray-600">CI [{Math.min(...eye.tiltCI).toFixed(1)}, {Math.max(...eye.tiltCI).toFixed(1)}]° · {eye.severity}</div>
+              </div>
+            ))}
           </div>
           {analysisResult.occlusion.overallConfidence < 0.9 && (
             <div className="text-yellow-400">
